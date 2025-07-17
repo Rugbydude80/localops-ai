@@ -8,6 +8,7 @@ import { supabase, Staff } from '../../lib/supabase'
 import { usePermissions, RoleBadge } from '../hooks/usePermissions'
 import { useNotifications } from '../hooks/useNotifications'
 import ChatSystem from '../components/ChatSystem'
+import ExcelImportExport from '../components/ExcelImportExport'
 
 // Types
 interface Shift {
@@ -889,6 +890,16 @@ function AssignStaffModal({ shift, staff, onClose, onAssign, onReportSick, isLoa
             </div>
           </div>
         )}
+        
+        {/* Excel Import/Export Section */}
+        <div className="mt-8">
+          <ExcelImportExport 
+            onDataImported={() => {
+              queryClient.invalidateQueries({ queryKey: ['shifts'] });
+              queryClient.invalidateQueries({ queryKey: ['staff'] });
+            }}
+          />
+        </div>
       </div>
     </div>
   )

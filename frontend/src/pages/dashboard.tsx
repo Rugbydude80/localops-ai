@@ -16,6 +16,7 @@ import { format, parseISO, addDays, startOfWeek, endOfWeek, isSameDay } from 'da
 import { supabase, Staff } from '../../lib/supabase'
 import ShiftDetailModal from '../components/ShiftDetailModal'
 import StaffAvailabilityModal from '../components/StaffAvailabilityModal'
+import ExcelImportExport from '../components/ExcelImportExport'
 
 // Types
 interface Shift {
@@ -960,6 +961,14 @@ export default function DashboardPage() {
                   )}
                 </div>
               </div>
+              
+              {/* Excel Import/Export Section */}
+              <ExcelImportExport 
+                onDataImported={() => {
+                  queryClient.invalidateQueries({ queryKey: ['staff'] });
+                  queryClient.invalidateQueries({ queryKey: ['shifts'] });
+                }}
+              />
             </div>
           )}
         </main>
