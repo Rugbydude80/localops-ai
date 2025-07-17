@@ -26,12 +26,19 @@ export interface Staff {
   phone_number: string
   email?: string
   role: string
+  roles?: string[]
   skills: string[]
+  seniority_level?: string
   availability?: Record<string, string[]>
   reliability_score: number
   is_active: boolean
   hired_date: string
   last_shift_date?: string
+  max_weekly_hours?: number
+  unavailable_times?: any[]
+  contract_type?: string
+  hourly_rate?: number
+  currency?: string
 }
 
 export interface EmergencyRequest {

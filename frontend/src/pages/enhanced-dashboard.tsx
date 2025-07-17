@@ -10,8 +10,8 @@ import {
   ExclamationTriangleIcon,
   StarIcon,
   ClockIcon,
-  TrendingUpIcon,
-  TrendingDownIcon,
+  ArrowTrendingUpIcon,
+  ArrowTrendingDownIcon,
   CheckCircleIcon
 } from '@heroicons/react/24/outline'
 import { useQuery } from '@tanstack/react-query'
@@ -387,8 +387,8 @@ function OverviewDashboard({ metrics, loading, communication, training, inventor
 // Metric Card Component
 function MetricCard({ title, value, target, trend, color }: any) {
   const getTrendIcon = () => {
-    if (trend === 'increasing') return <TrendingUpIcon className="h-4 w-4 text-green-500" />
-    if (trend === 'decreasing') return <TrendingDownIcon className="h-4 w-4 text-red-500" />
+    if (trend === 'increasing') return <ArrowTrendingUpIcon className="h-4 w-4 text-green-500" />
+    if (trend === 'decreasing') return <ArrowTrendingDownIcon className="h-4 w-4 text-red-500" />
     return <div className="h-4 w-4 bg-gray-300 rounded-full"></div>
   }
 

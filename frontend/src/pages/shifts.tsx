@@ -4,7 +4,7 @@ import { CalendarIcon, PlusIcon, UserGroupIcon, ExclamationTriangleIcon, ClockIc
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { format, parseISO, startOfWeek, endOfWeek, addDays, isSameDay } from 'date-fns'
-import { supabase } from '../../lib/supabase'
+import { supabase, Staff } from '../../lib/supabase'
 import { usePermissions, RoleBadge } from '../hooks/usePermissions'
 import { useNotifications } from '../hooks/useNotifications'
 import ChatSystem from '../components/ChatSystem'
@@ -30,13 +30,7 @@ interface Assignment {
   status: string
 }
 
-interface Staff {
-  id: number
-  name: string
-  role: string
-  skills: string[]
-  phone_number: string
-}
+
 
 // API functions using Supabase
 const api = {

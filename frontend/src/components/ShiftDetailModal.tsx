@@ -11,24 +11,10 @@ import {
   LockClosedIcon
 } from '@heroicons/react/24/outline'
 import { format, parseISO, isSameDay } from 'date-fns'
-import { supabase } from '../../lib/supabase'
+import { supabase, Staff } from '../../lib/supabase'
 import { usePermissions, RoleBadge } from '../hooks/usePermissions'
 
-interface Staff {
-  id: number
-  name: string
-  role: string
-  skills: string[]
-  roles: string[]
-  seniority_level: string
-  phone_number: string
-  max_weekly_hours: number
-  unavailable_times: any[]
-  contract_type: string
-  reliability_score: number
-  hourly_rate?: number
-  currency?: string
-}
+
 
 interface RoleRequirement {
   id: number

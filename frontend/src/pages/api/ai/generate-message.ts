@@ -29,19 +29,20 @@ export default async function handler(
     return res.status(200).json({ message: fallbackMessage, ai_generated: false })
   }
 
-  try {
-    const formattedDate = new Date(shift_date).toLocaleDateString('en-GB', { 
-      weekday: 'long', 
-      month: 'long', 
-      day: 'numeric' 
-    })
+  const formattedDate = new Date(shift_date).toLocaleDateString('en-GB', { 
+    weekday: 'long', 
+    month: 'long', 
+    day: 'numeric' 
+  })
 
-    const urgencyPrefix = {
-      'low': 'Hi there!',
-      'normal': 'Hi!',
-      'high': 'Urgent:',
-      'critical': 'URGENT:'
-    }[urgency] || 'Hi!'
+  const urgencyPrefix = {
+    'low': 'Hi there!',
+    'normal': 'Hi!',
+    'high': 'Urgent:',
+    'critical': 'URGENT:'
+  }[urgency] || 'Hi!'
+
+  try {
 
     const prompt = `Generate a professional but friendly WhatsApp message for a restaurant staff coverage request.
 
@@ -76,7 +77,7 @@ Do not include response instructions (YES/NO) as those will be added separately.
       temperature: 0.7
     })
 
-    let aiMessage = response.choices[0].message.content?.strip() || ''
+    let aiMessage = response.choices[0].message.content?.trim() || ''
 
     // Add custom message if provided
     if (custom_message) {

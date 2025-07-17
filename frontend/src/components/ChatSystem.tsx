@@ -93,7 +93,7 @@ export default function ChatSystem({ currentStaffId, businessId }: ChatSystemPro
 
       if (error) throw error;
 
-      const convos = data?.map(item => ({
+      const convos = data?.map((item: any) => ({
         id: item.conversations.id,
         name: item.conversations.name || 'Direct Message',
         type: item.conversations.type,

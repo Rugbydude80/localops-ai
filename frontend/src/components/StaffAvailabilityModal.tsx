@@ -1,21 +1,13 @@
 import { useState, useEffect } from 'react'
-import { 
-  XMarkIcon, 
-  CalendarDaysIcon, 
-  ClockIcon, 
+import {
+  XMarkIcon,
+  CalendarDaysIcon,
+  ClockIcon,
   PlusIcon,
   TrashIcon
 } from '@heroicons/react/24/outline'
 import { format, addDays } from 'date-fns'
-import { supabase } from '../../lib/supabase'
-
-interface Staff {
-  id: number
-  name: string
-  max_weekly_hours: number
-  unavailable_times: any[]
-  contract_type: string
-}
+import { supabase, Staff } from '../../lib/supabase'
 
 interface StaffAvailabilityModalProps {
   staff: Staff
@@ -277,7 +269,7 @@ export default function StaffAvailabilityModal({ staff, onClose, onUpdate }: Sta
                     <label className="block text-sm font-medium text-gray-700 mb-1">Day</label>
                     <select
                       value={newUnavailable.day}
-                      onChange={(e) => setNewUnavailable({...newUnavailable, day: e.target.value})}
+                      onChange={(e) => setNewUnavailable({ ...newUnavailable, day: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                     >
                       <option value="monday">Monday</option>
@@ -294,7 +286,7 @@ export default function StaffAvailabilityModal({ staff, onClose, onUpdate }: Sta
                     <input
                       type="text"
                       value={newUnavailable.reason}
-                      onChange={(e) => setNewUnavailable({...newUnavailable, reason: e.target.value})}
+                      onChange={(e) => setNewUnavailable({ ...newUnavailable, reason: e.target.value })}
                       placeholder="e.g., school, childcare, other job"
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                     />
@@ -306,7 +298,7 @@ export default function StaffAvailabilityModal({ staff, onClose, onUpdate }: Sta
                     <input
                       type="checkbox"
                       checked={newUnavailable.all_day}
-                      onChange={(e) => setNewUnavailable({...newUnavailable, all_day: e.target.checked})}
+                      onChange={(e) => setNewUnavailable({ ...newUnavailable, all_day: e.target.checked })}
                       className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                     />
                     <span className="ml-2 text-sm text-gray-700">All day unavailable</span>
@@ -320,7 +312,7 @@ export default function StaffAvailabilityModal({ staff, onClose, onUpdate }: Sta
                       <input
                         type="time"
                         value={newUnavailable.start_time}
-                        onChange={(e) => setNewUnavailable({...newUnavailable, start_time: e.target.value})}
+                        onChange={(e) => setNewUnavailable({ ...newUnavailable, start_time: e.target.value })}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                       />
                     </div>
@@ -329,7 +321,7 @@ export default function StaffAvailabilityModal({ staff, onClose, onUpdate }: Sta
                       <input
                         type="time"
                         value={newUnavailable.end_time}
-                        onChange={(e) => setNewUnavailable({...newUnavailable, end_time: e.target.value})}
+                        onChange={(e) => setNewUnavailable({ ...newUnavailable, end_time: e.target.value })}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                       />
                     </div>
@@ -410,7 +402,7 @@ export default function StaffAvailabilityModal({ staff, onClose, onUpdate }: Sta
                     <input
                       type="date"
                       value={newTimeOff.start_date}
-                      onChange={(e) => setNewTimeOff({...newTimeOff, start_date: e.target.value})}
+                      onChange={(e) => setNewTimeOff({ ...newTimeOff, start_date: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                     />
                   </div>
@@ -419,7 +411,7 @@ export default function StaffAvailabilityModal({ staff, onClose, onUpdate }: Sta
                     <input
                       type="date"
                       value={newTimeOff.end_date}
-                      onChange={(e) => setNewTimeOff({...newTimeOff, end_date: e.target.value})}
+                      onChange={(e) => setNewTimeOff({ ...newTimeOff, end_date: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                     />
                   </div>
@@ -427,7 +419,7 @@ export default function StaffAvailabilityModal({ staff, onClose, onUpdate }: Sta
                     <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
                     <select
                       value={newTimeOff.availability_type}
-                      onChange={(e) => setNewTimeOff({...newTimeOff, availability_type: e.target.value})}
+                      onChange={(e) => setNewTimeOff({ ...newTimeOff, availability_type: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                     >
                       <option value="holiday">Holiday</option>
@@ -440,7 +432,7 @@ export default function StaffAvailabilityModal({ staff, onClose, onUpdate }: Sta
                     <input
                       type="text"
                       value={newTimeOff.reason}
-                      onChange={(e) => setNewTimeOff({...newTimeOff, reason: e.target.value})}
+                      onChange={(e) => setNewTimeOff({ ...newTimeOff, reason: e.target.value })}
                       placeholder="e.g., family vacation, medical appointment"
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                     />

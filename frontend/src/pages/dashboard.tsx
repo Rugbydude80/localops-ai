@@ -45,6 +45,7 @@ interface EmergencyRequest {
   shift_end: string
   required_skill: string
   urgency: string
+  message?: string
   status: string
   created_at: string
 }
@@ -874,18 +875,90 @@ export default function DashboardPage() {
 
           {/* Staff Mode */}
           {viewMode === 'staff' && (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
-              <div className="text-center">
-                <UserGroupIcon className="h-16 w-16 text-green-600 mx-auto mb-4" />
-                <h2 className="text-2xl font-bold text-gray-900 mb-2">Staff Management</h2>
-                <p className="text-gray-600 mb-6">Manage your team members and their details</p>
-                <a
-                  href="/"
-                  className="inline-flex items-center px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 shadow-sm"
-                >
-                  <UserGroupIcon className="h-5 w-5 mr-2" />
-                  Manage Staff
-                </a>
+            <div className="space-y-6">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+                <div className="px-6 py-4 border-b border-gray-100">
+                  <h2 className="text-xl font-semibold text-gray-900">Staff Management</h2>
+                  <p className="text-sm text-gray-500">Click on any staff member to manage their availability</p>
+                </div>
+                <div className="p-6">
+                  {staffLoading ? (
+                    <div className="text-center py-8">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+                      <p className="text-gray-500 mt-2">Loading staff...</p>
+                    </div>
+                  ) : staff.length === 0 ? (
+                    <div className="text-center py-8">
+                      <UserGroupIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                      <p className="text-gray-600">No staff members found</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {staff.map(staffMember => (
+                        <div 
+                          key={staffMember.id}
+                          onClick={() => setSelectedStaffForAvailability(staffMember)}
+                          className="p-4 rounded-lg border border-gray-200 hover:border-blue-300 hover:shadow-md transition-all duration-200 cursor-pointer bg-white"
+                        >
+                          <div className="flex items-start justify-between mb-3">
+                            <div className="flex-1">
+                              <h3 className="font-semibold text-gray-900">{staffMember.name}</h3>
+                              <p className="text-sm text-gray-600 capitalize">{staffMember.role}</p>
+                            </div>
+                            <div className="flex items-center space-x-1">
+                              <div className={`w-2 h-2 rounded-full ${staffMember.is_active ? 'bg-green-500' : 'bg-gray-400'}`}></div>
+                              <span className="text-xs text-gray-500">
+                                {staffMember.is_active ? 'Active' : 'Inactive'}
+                              </span>
+                            </div>
+                          </div>
+                          
+                          <div className="space-y-2 text-sm">
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">Max Hours:</span>
+                              <span className="font-medium">{staffMember.max_weekly_hours || 40}h/week</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">Contract:</span>
+                              <span className="font-medium capitalize">{(staffMember.contract_type || 'full_time').replace('_', ' ')}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">Reliability:</span>
+                              <span className="font-medium">{staffMember.reliability_score || 8}/10</span>
+                            </div>
+                          </div>
+
+                          {staffMember.skills && staffMember.skills.length > 0 && (
+                            <div className="mt-3">
+                              <div className="flex flex-wrap gap-1">
+                                {staffMember.skills.slice(0, 3).map(skill => (
+                                  <span 
+                                    key={skill}
+                                    className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full capitalize"
+                                  >
+                                    {skill.replace('_', ' ')}
+                                  </span>
+                                ))}
+                                {staffMember.skills.length > 3 && (
+                                  <span className="px-2 py-1 text-xs bg-gray-100 text-gray-600 rounded-full">
+                                    +{staffMember.skills.length - 3} more
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="mt-3 pt-3 border-t border-gray-100">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-gray-500">Click to manage availability</span>
+                              <Cog6ToothIcon className="h-4 w-4 text-gray-400" />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -904,9 +977,9 @@ export default function DashboardPage() {
         {/* Staff Availability Modal */}
         {selectedStaffForAvailability && (
           <StaffAvailabilityModal
-            staff={selectedStaffForAvailability}
+            staff={selectedStaffForAvailability as any}
             onClose={() => setSelectedStaffForAvailability(null)}
-            onUpdate={(updatedStaff) => updateStaffMutation.mutate(updatedStaff)}
+            onUpdate={(updatedStaff) => updateStaffMutation.mutate(updatedStaff as any)}
           />
         )}
       </div>
