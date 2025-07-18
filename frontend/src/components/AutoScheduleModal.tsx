@@ -39,6 +39,16 @@ export interface SchedulingConstraints {
   laborCostOptimization: boolean
 }
 
+export interface NotificationPreferences {
+  notifyOnGeneration: boolean
+  notifyOnPublish: boolean
+  channels: ('whatsapp' | 'sms' | 'email')[]
+  customMessage?: string
+  retryFailedNotifications: boolean
+  notificationPriority: 'low' | 'medium' | 'high'
+  deliveryConfirmation: boolean
+}
+
 export interface AutoScheduleParams {
   dateRange: {
     start: string
@@ -47,11 +57,7 @@ export interface AutoScheduleParams {
   specialEvents: SpecialEvent[]
   staffNotes: StaffNote[]
   constraints: SchedulingConstraints
-  notificationSettings: {
-    notifyOnGeneration: boolean
-    notifyOnPublish: boolean
-    channels: ('whatsapp' | 'sms' | 'email')[]
-  }
+  notificationSettings: NotificationPreferences
 }
 
 export interface AutoScheduleModalProps {
@@ -80,6 +86,10 @@ interface FormData {
   notifyOnGeneration: boolean
   notifyOnPublish: boolean
   notificationChannels: string[]
+  customMessage: string
+  retryFailedNotifications: boolean
+  notificationPriority: 'low' | 'medium' | 'high'
+  deliveryConfirmation: boolean
 }
 
 const AutoScheduleModal: React.FC<AutoScheduleModalProps> = ({
@@ -121,7 +131,11 @@ const AutoScheduleModal: React.FC<AutoScheduleModalProps> = ({
       laborCostOptimization: false,
       notifyOnGeneration: false,
       notifyOnPublish: true,
-      notificationChannels: ['email']
+      notificationChannels: ['email'],
+      customMessage: '',
+      retryFailedNotifications: true,
+      notificationPriority: 'medium',
+      deliveryConfirmation: false
     },
     mode: 'onChange'
   })
@@ -218,7 +232,11 @@ const AutoScheduleModal: React.FC<AutoScheduleModalProps> = ({
         notificationSettings: {
           notifyOnGeneration: data.notifyOnGeneration,
           notifyOnPublish: data.notifyOnPublish,
-          channels: data.notificationChannels as ('whatsapp' | 'sms' | 'email')[]
+          channels: data.notificationChannels as ('whatsapp' | 'sms' | 'email')[],
+          customMessage: data.customMessage,
+          retryFailedNotifications: data.retryFailedNotifications,
+          notificationPriority: data.notificationPriority,
+          deliveryConfirmation: data.deliveryConfirmation
         }
       }
 
@@ -768,76 +786,182 @@ const AutoScheduleModal: React.FC<AutoScheduleModalProps> = ({
                   <BellIcon className="h-5 w-5 mr-2" />
                   Notification Settings
                 </h3>
-                <div className="space-y-4">
-                  <div className="flex items-center">
-                    <Controller
-                      name="notifyOnGeneration"
-                      control={control}
-                      render={({ field }) => (
-                        <input
-                          type="checkbox"
-                          checked={field.value}
-                          onChange={field.onChange}
-                          onBlur={field.onBlur}
-                          name={field.name}
-                          ref={field.ref}
-                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                        />
-                      )}
-                    />
-                    <label className="ml-2 block text-sm text-gray-900">
-                      Notify me when schedule generation is complete
-                    </label>
+                <div className="space-y-6">
+                  {/* Basic Notification Options */}
+                  <div className="space-y-3">
+                    <div className="flex items-center">
+                      <Controller
+                        name="notifyOnGeneration"
+                        control={control}
+                        render={({ field }) => (
+                          <input
+                            type="checkbox"
+                            checked={field.value}
+                            onChange={field.onChange}
+                            onBlur={field.onBlur}
+                            name={field.name}
+                            ref={field.ref}
+                            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                          />
+                        )}
+                      />
+                      <label className="ml-2 block text-sm text-gray-900">
+                        Notify me when schedule generation is complete
+                      </label>
+                    </div>
+                    <div className="flex items-center">
+                      <Controller
+                        name="notifyOnPublish"
+                        control={control}
+                        render={({ field }) => (
+                          <input
+                            type="checkbox"
+                            checked={field.value}
+                            onChange={field.onChange}
+                            onBlur={field.onBlur}
+                            name={field.name}
+                            ref={field.ref}
+                            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                          />
+                        )}
+                      />
+                      <label className="ml-2 block text-sm text-gray-900">
+                        Notify staff when schedule is published
+                      </label>
+                    </div>
                   </div>
-                  <div className="flex items-center">
-                    <Controller
-                      name="notifyOnPublish"
-                      control={control}
-                      render={({ field }) => (
-                        <input
-                          type="checkbox"
-                          checked={field.value}
-                          onChange={field.onChange}
-                          onBlur={field.onBlur}
-                          name={field.name}
-                          ref={field.ref}
-                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                        />
-                      )}
-                    />
-                    <label className="ml-2 block text-sm text-gray-900">
-                      Notify staff when schedule is published
-                    </label>
-                  </div>
+
+                  {/* Notification Channels */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-3">
                       Notification Channels
                     </label>
-                    <div className="space-y-2">
-                      {['email', 'whatsapp', 'sms'].map((channel) => (
-                        <div key={channel} className="flex items-center">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      {[
+                        { key: 'email', label: 'Email', icon: '📧', description: 'Reliable delivery' },
+                        { key: 'whatsapp', label: 'WhatsApp', icon: '💬', description: 'Instant messaging' },
+                        { key: 'sms', label: 'SMS', icon: '📱', description: 'Text messages' }
+                      ].map((channel) => (
+                        <div key={channel.key} className="relative">
                           <Controller
                             name="notificationChannels"
                             control={control}
                             render={({ field }) => (
+                              <label className={`flex items-center p-3 border rounded-lg cursor-pointer transition-colors ${
+                                field.value.includes(channel.key)
+                                  ? 'border-blue-500 bg-blue-50'
+                                  : 'border-gray-300 hover:border-gray-400'
+                              }`}>
+                                <input
+                                  type="checkbox"
+                                  checked={field.value.includes(channel.key)}
+                                  onChange={(e) => {
+                                    const newChannels = e.target.checked
+                                      ? [...field.value, channel.key]
+                                      : field.value.filter(c => c !== channel.key)
+                                    field.onChange(newChannels)
+                                  }}
+                                  className="sr-only"
+                                />
+                                <div className="flex-1">
+                                  <div className="flex items-center">
+                                    <span className="text-lg mr-2">{channel.icon}</span>
+                                    <span className="font-medium text-gray-900">{channel.label}</span>
+                                  </div>
+                                  <p className="text-xs text-gray-500 mt-1">{channel.description}</p>
+                                </div>
+                                {field.value.includes(channel.key) && (
+                                  <CheckCircleIcon className="h-5 w-5 text-blue-600" />
+                                )}
+                              </label>
+                            )}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Advanced Notification Options */}
+                  <div className="border-t border-gray-200 pt-4">
+                    <h4 className="text-sm font-medium text-gray-900 mb-3">Advanced Options</h4>
+                    <div className="space-y-4">
+                      {/* Custom Message */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Custom Message (Optional)
+                        </label>
+                        <Controller
+                          name="customMessage"
+                          control={control}
+                          render={({ field }) => (
+                            <textarea
+                              {...field}
+                              rows={2}
+                              placeholder="Add a personal note to include with notifications..."
+                              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm"
+                            />
+                          )}
+                        />
+                      </div>
+
+                      {/* Notification Priority */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Notification Priority
+                        </label>
+                        <Controller
+                          name="notificationPriority"
+                          control={control}
+                          render={({ field }) => (
+                            <select
+                              {...field}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm"
+                            >
+                              <option value="low">Low - Standard delivery</option>
+                              <option value="medium">Medium - Priority delivery</option>
+                              <option value="high">High - Urgent delivery</option>
+                            </select>
+                          )}
+                        />
+                      </div>
+
+                      {/* Additional Options */}
+                      <div className="space-y-2">
+                        <div className="flex items-center">
+                          <Controller
+                            name="retryFailedNotifications"
+                            control={control}
+                            render={({ field }) => (
                               <input
                                 type="checkbox"
-                                checked={field.value.includes(channel)}
-                                onChange={(e) => {
-                                  const newChannels = e.target.checked
-                                    ? [...field.value, channel]
-                                    : field.value.filter(c => c !== channel)
-                                  field.onChange(newChannels)
-                                }}
+                                checked={field.value}
+                                onChange={field.onChange}
                                 className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                               />
                             )}
                           />
-                          <label className="ml-2 block text-sm text-gray-900 capitalize">
-                            {channel}
+                          <label className="ml-2 block text-sm text-gray-900">
+                            Automatically retry failed notifications
                           </label>
                         </div>
-                      ))}
+                        <div className="flex items-center">
+                          <Controller
+                            name="deliveryConfirmation"
+                            control={control}
+                            render={({ field }) => (
+                              <input
+                                type="checkbox"
+                                checked={field.value}
+                                onChange={field.onChange}
+                                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                              />
+                            )}
+                          />
+                          <label className="ml-2 block text-sm text-gray-900">
+                            Request delivery confirmation when possible
+                          </label>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>

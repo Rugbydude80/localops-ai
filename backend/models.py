@@ -571,10 +571,13 @@ class ScheduleNotification(Base):
     notification_type = Column(String, nullable=False, index=True)  # new_schedule, schedule_change
     channel = Column(String, nullable=False)  # whatsapp, sms, email
     content = Column(Text, nullable=False)
-    status = Column(String, default="pending", index=True)  # pending, sent, delivered, failed
+    status = Column(String, default="pending", index=True)  # pending, sent, delivered, failed, retrying
     sent_at = Column(DateTime, index=True)
     delivered_at = Column(DateTime)
     external_id = Column(String)  # External service message ID
+    retry_count = Column(Integer, default=0)  # Number of retry attempts
+    error_message = Column(Text)  # Last error message
+    priority = Column(String, default="medium")  # low, medium, high
     created_at = Column(DateTime, default=datetime.now)
     
     # Relationships

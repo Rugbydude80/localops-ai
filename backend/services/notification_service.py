@@ -471,11 +471,34 @@ class NotificationService:
         channel: str,
         draft_id: str,
         notification_type: str,
-        max_retries: int = 3
+        max_retries: int = 3,
+        notification_settings: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """Send notification with retry mechanism and exponential backoff"""
         
+        # Use settings from notification_settings if provided
+        if notification_settings:
+            max_retries = notification_settings.get("max_retry_attempts", max_retries)
+            if not notification_settings.get("retry_failed_notifications", True):
+                max_retries = 1
+        
         last_error = None
+        notification_record = None
+        
+        # Create initial notification record
+        try:
+            notification_record = ScheduleNotification(
+                draft_id=draft_id,
+                staff_id=staff.id,
+                notification_type=notification_type,
+                channel=channel,
+                content=message_content,
+                status="pending"
+            )
+            self.db.add(notification_record)
+            self.db.commit()
+        except Exception as e:
+            logger.error(f"Failed to create notification record: {str(e)}")
         
         for attempt in range(max_retries):
             try:
@@ -487,15 +510,15 @@ class NotificationService:
                 
                 # Send notification based on channel
                 if channel == "whatsapp" and staff.phone_number:
-                    result = await self._send_whatsapp_notification_safe(
+                    result = await self._send_whatsapp_notification(
                         staff, message_content, draft_id, notification_type
                     )
                 elif channel == "sms" and staff.phone_number:
-                    result = await self._send_sms_notification_safe(
+                    result = await self._send_sms_notification(
                         staff, message_content, draft_id, notification_type
                     )
                 elif channel == "email" and staff.email:
-                    result = await self._send_email_notification_safe(
+                    result = await self._send_email_notification(
                         staff, message_content, draft_id, notification_type
                     )
                 else:
@@ -505,29 +528,66 @@ class NotificationService:
                         "attempts": attempt + 1
                     }
                 
-                # If successful, return immediately
+                # If successful, update notification record and return
                 if result["success"]:
+                    if notification_record:
+                        notification_record.status = "sent"
+                        notification_record.sent_at = datetime.now()
+                        notification_record.external_id = result.get("message_id")
+                        self.db.commit()
+                    
                     result["attempts"] = attempt + 1
+                    result["notification_id"] = notification_record.id if notification_record else None
                     return result
                 
                 # Store the error for potential retry
                 last_error = result.get("error", "Unknown error")
                 
+                # Update notification record with retry status
+                if notification_record:
+                    notification_record.status = "retrying" if attempt < max_retries - 1 else "failed"
+                    notification_record.retry_count = attempt + 1
+                    notification_record.error_message = result.get("error", "Unknown error")
+                    self.db.commit()
+                
                 # Check if this is a permanent failure (don't retry)
                 if self._is_permanent_failure(result.get("error", "")):
                     logger.warning(f"Permanent failure detected for {channel} to {staff.name}: {last_error}")
-                    break
+                    if notification_record:
+                        notification_record.status = "failed"
+                        self.db.commit()
+                    
+                    # Return immediately for permanent failures
+                    return {
+                        "success": False,
+                        "error": last_error,
+                        "attempts": attempt + 1,
+                        "permanent_failure": True,
+                        "notification_id": notification_record.id if notification_record else None
+                    }
                 
             except Exception as e:
                 last_error = str(e)
                 logger.warning(f"Attempt {attempt + 1} failed for {channel} to {staff.name}: {str(e)}")
+                
+                # Update notification record with error
+                if notification_record:
+                    notification_record.status = "retrying" if attempt < max_retries - 1 else "failed"
+                    notification_record.retry_count = attempt + 1
+                    notification_record.error_message = str(e)
+                    self.db.commit()
         
-        # All retries failed
+        # All retries failed - final update to notification record
+        if notification_record:
+            notification_record.status = "failed"
+            self.db.commit()
+        
         return {
             "success": False,
             "error": last_error,
             "attempts": max_retries,
-            "retry_exhausted": True
+            "retry_exhausted": True,
+            "notification_id": notification_record.id if notification_record else None
         }
     
     def _is_permanent_failure(self, error_message: str) -> bool:
@@ -539,7 +599,10 @@ class NotificationService:
             "unsubscribed",
             "invalid recipient",
             "authentication failed",
-            "unauthorized"
+            "unauthorized",
+            "failed to send whatsapp notification: invalid phone number",
+            "failed to send sms notification: invalid phone number",
+            "failed to send email notification: invalid email address"
         ]
         
         error_lower = error_message.lower()
@@ -825,45 +888,205 @@ class NotificationService:
             
             if not notifications:
                 return {
-                    "draft_id": draft_id,
+                    "success": True,
+                    "notifications": [],
+                    "summary": {},
                     "total_notifications": 0,
-                    "status_summary": {},
-                    "notifications": []
+                    "success_rate": 0.0
                 }
             
-            # Summarize status
+            # Build notification status list
+            notification_statuses = []
             status_counts = {}
-            channel_counts = {}
             
-            notification_details = []
             for notification in notifications:
-                # Count by status
-                status_counts[notification.status] = status_counts.get(notification.status, 0) + 1
-                
-                # Count by channel
-                channel_counts[notification.channel] = channel_counts.get(notification.channel, 0) + 1
-                
-                # Get staff info
+                # Get staff name
                 staff = self.db.query(Staff).filter(Staff.id == notification.staff_id).first()
+                staff_name = staff.name if staff else f"Staff {notification.staff_id}"
                 
-                notification_details.append({
+                status_info = {
                     "id": notification.id,
+                    "draft_id": notification.draft_id,
                     "staff_id": notification.staff_id,
-                    "staff_name": staff.name if staff else "Unknown",
+                    "staff_name": staff_name,
                     "notification_type": notification.notification_type,
                     "channel": notification.channel,
                     "status": notification.status,
-                    "sent_at": notification.sent_at.isoformat() if notification.sent_at else None,
-                    "delivered_at": notification.delivered_at.isoformat() if notification.delivered_at else None
-                })
+                    "sent_at": notification.sent_at,
+                    "delivered_at": notification.delivered_at,
+                    "retry_count": getattr(notification, 'retry_count', 0),
+                    "error_message": getattr(notification, 'error_message', None),
+                    "external_id": notification.external_id
+                }
+                
+                notification_statuses.append(status_info)
+                
+                # Count statuses
+                status = notification.status
+                status_counts[status] = status_counts.get(status, 0) + 1
+            
+            # Calculate success rate
+            successful = status_counts.get("sent", 0) + status_counts.get("delivered", 0)
+            total = len(notifications)
+            success_rate = (successful / total * 100) if total > 0 else 0
             
             return {
-                "draft_id": draft_id,
-                "total_notifications": len(notifications),
-                "status_summary": status_counts,
-                "channel_summary": channel_counts,
-                "notifications": notification_details
+                "success": True,
+                "notifications": notification_statuses,
+                "summary": status_counts,
+                "total_notifications": total,
+                "success_rate": round(success_rate, 2)
             }
+            
+        except Exception as e:
+            logger.error(f"Failed to get notification status: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "notifications": [],
+                "summary": {},
+                "total_notifications": 0,
+                "success_rate": 0.0
+            }
+    
+    async def retry_failed_notifications(
+        self,
+        draft_id: str,
+        notification_ids: List[int] = None
+    ) -> Dict[str, Any]:
+        """Retry failed notifications for a schedule draft"""
+        
+        try:
+            # Build query for failed notifications
+            query = self.db.query(ScheduleNotification).filter(
+                and_(
+                    ScheduleNotification.draft_id == draft_id,
+                    ScheduleNotification.status.in_(["failed", "retrying"])
+                )
+            )
+            
+            # Filter by specific notification IDs if provided
+            if notification_ids:
+                query = query.filter(ScheduleNotification.id.in_(notification_ids))
+            
+            failed_notifications = query.all()
+            
+            if not failed_notifications:
+                return {
+                    "success": True,
+                    "message": "No failed notifications to retry",
+                    "retried_count": 0,
+                    "successful_retries": 0,
+                    "failed_retries": 0
+                }
+            
+            retried_count = 0
+            successful_retries = 0
+            failed_retries = 0
+            
+            for notification in failed_notifications:
+                try:
+                    # Get staff details
+                    staff = self.db.query(Staff).filter(Staff.id == notification.staff_id).first()
+                    if not staff:
+                        logger.error(f"Staff {notification.staff_id} not found for notification retry")
+                        failed_retries += 1
+                        continue
+                    
+                    # Reset notification status for retry
+                    notification.status = "pending"
+                    notification.retry_count = getattr(notification, 'retry_count', 0)
+                    notification.error_message = None
+                    self.db.commit()
+                    
+                    # Attempt to resend
+                    result = await self._send_notification_with_retry(
+                        staff=staff,
+                        message_content=notification.content,
+                        channel=notification.channel,
+                        draft_id=notification.draft_id,
+                        notification_type=notification.notification_type,
+                        max_retries=2  # Fewer retries for manual retry
+                    )
+                    
+                    retried_count += 1
+                    
+                    if result["success"]:
+                        successful_retries += 1
+                        # Update original notification record
+                        notification.status = "sent"
+                        notification.sent_at = datetime.now()
+                        notification.external_id = result.get("message_id")
+                        self.db.commit()
+                        logger.info(f"Successfully retried notification {notification.id} for staff {staff.name}")
+                    else:
+                        failed_retries += 1
+                        # Update original notification record with failure
+                        notification.status = "failed"
+                        notification.error_message = result.get("error")
+                        notification.retry_count = getattr(notification, 'retry_count', 0) + 1
+                        self.db.commit()
+                        logger.warning(f"Retry failed for notification {notification.id}: {result.get('error')}")
+                    
+                except Exception as e:
+                    logger.error(f"Error retrying notification {notification.id}: {str(e)}")
+                    failed_retries += 1
+            
+            return {
+                "success": True,
+                "message": f"Retried {retried_count} notifications",
+                "retried_count": retried_count,
+                "successful_retries": successful_retries,
+                "failed_retries": failed_retries
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to retry notifications: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "retried_count": 0,
+                "successful_retries": 0,
+                "failed_retries": 0
+            }
+    
+    async def update_delivery_status(
+        self,
+        external_id: str,
+        status: str,
+        delivered_at: datetime = None
+    ) -> bool:
+        """Update notification delivery status from external service webhook"""
+        
+        try:
+            notification = self.db.query(ScheduleNotification).filter(
+                ScheduleNotification.external_id == external_id
+            ).first()
+            
+            if not notification:
+                logger.warning(f"Notification with external_id {external_id} not found")
+                return False
+            
+            # Update status
+            if status in ["delivered", "read", "failed"]:
+                notification.status = status
+                if delivered_at:
+                    notification.delivered_at = delivered_at
+                elif status == "delivered":
+                    notification.delivered_at = datetime.now()
+                
+                self.db.commit()
+                logger.info(f"Updated notification {notification.id} status to {status}")
+                return True
+            else:
+                logger.warning(f"Invalid status update: {status}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Failed to update delivery status: {str(e)}")
+            return False
+    
+
             
         except Exception as e:
             logger.error(f"Failed to get notification status: {str(e)}")
@@ -873,89 +1096,7 @@ class NotificationService:
                 "total_notifications": 0
             }
     
-    async def retry_failed_notifications(
-        self,
-        draft_id: str,
-        channels: Optional[List[str]] = None
-    ) -> Dict[str, Any]:
-        """Retry failed notifications for a schedule draft"""
-        
-        try:
-            # Get failed notifications
-            query = self.db.query(ScheduleNotification).filter(
-                and_(
-                    ScheduleNotification.draft_id == draft_id,
-                    ScheduleNotification.status == "failed"
-                )
-            )
-            
-            if channels:
-                query = query.filter(ScheduleNotification.channel.in_(channels))
-            
-            failed_notifications = query.all()
-            
-            if not failed_notifications:
-                return {
-                    "success": True,
-                    "message": "No failed notifications to retry",
-                    "retried": 0,
-                    "successful_retries": 0
-                }
-            
-            successful_retries = 0
-            
-            for notification in failed_notifications:
-                try:
-                    # Get staff info
-                    staff = self.db.query(Staff).filter(
-                        Staff.id == notification.staff_id
-                    ).first()
-                    
-                    if not staff:
-                        continue
-                    
-                    # Retry based on channel
-                    if notification.channel == "whatsapp":
-                        result = await self._send_whatsapp_notification(
-                            staff, notification.content, draft_id, notification.notification_type
-                        )
-                    elif notification.channel == "sms":
-                        result = await self._send_sms_notification(
-                            staff, notification.content, draft_id, notification.notification_type
-                        )
-                    elif notification.channel == "email":
-                        result = await self._send_email_notification(
-                            staff, notification.content, draft_id, notification.notification_type
-                        )
-                    else:
-                        continue
-                    
-                    if result["success"]:
-                        successful_retries += 1
-                        # Update original notification status
-                        notification.status = "sent"
-                        notification.sent_at = datetime.now()
-                        notification.external_id = result.get("message_id")
-                        self.db.commit()
-                
-                except Exception as e:
-                    logger.error(f"Retry failed for notification {notification.id}: {str(e)}")
-            
-            return {
-                "success": True,
-                "retried": len(failed_notifications),
-                "successful_retries": successful_retries,
-                "message": f"Retried {len(failed_notifications)} notifications, {successful_retries} successful"
-            }
-            
-        except Exception as e:
-            logger.error(f"Notification retry failed: {str(e)}")
-            return {
-                "success": False,
-                "error": str(e),
-                "retried": 0,
-                "successful_retries": 0
-            }
+
 
 
 class ScheduleChangeDetector:

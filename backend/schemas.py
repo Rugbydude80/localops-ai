@@ -258,6 +258,10 @@ class NotificationSettings(BaseModel):
     notify_all_staff: bool = True
     channels: List[str] = ["whatsapp", "sms", "email"]
     custom_message: Optional[str] = None
+    retry_failed_notifications: bool = True
+    notification_priority: str = "medium"  # low, medium, high
+    delivery_confirmation: bool = False
+    max_retry_attempts: int = 3
 
 class PublishResponse(BaseModel):
     success: bool
@@ -268,6 +272,26 @@ class PublishResponse(BaseModel):
 # Notification Service Schemas
 class NotificationChannel(BaseModel):
     channel: str  # whatsapp, sms, email
+
+class NotificationStatus(BaseModel):
+    id: int
+    draft_id: str
+    staff_id: int
+    staff_name: str
+    notification_type: str
+    channel: str
+    status: str  # pending, sent, delivered, failed, retrying
+    sent_at: Optional[datetime] = None
+    delivered_at: Optional[datetime] = None
+    retry_count: int = 0
+    error_message: Optional[str] = None
+    external_id: Optional[str] = None
+
+class NotificationStatusResponse(BaseModel):
+    notifications: List[NotificationStatus]
+    summary: Dict[str, int]  # status counts
+    total_notifications: int
+    success_rate: float
     enabled: bool = True
     priority: int = 1  # Lower number = higher priority
 

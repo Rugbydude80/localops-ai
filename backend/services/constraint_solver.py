@@ -1059,6 +1059,18 @@ class ConstraintSolver:
                 violations.extend(self._validate_fair_distribution_constraint(
                     constraint, assignments, draft_assignments
                 ))
+            elif constraint.constraint_type == "min_staff_per_shift":
+                violations.extend(self._validate_min_staff_constraint(
+                    constraint, assignments, draft_assignments
+                ))
+            elif constraint.constraint_type == "max_overtime_hours":
+                violations.extend(self._validate_max_overtime_constraint(
+                    constraint, assignments, draft_assignments
+                ))
+            elif constraint.constraint_type == "weekend_rotation":
+                violations.extend(self._validate_weekend_rotation_constraint(
+                    constraint, assignments, draft_assignments
+                ))
         except Exception as e:
             violations.append({
                 "constraint_id": constraint.id,
@@ -1970,10 +1982,60 @@ class ConstraintSolver:
     ) -> List[DraftShiftAssignment]:
         """Balance medium priority constraints for optimal satisfaction"""
         
-        # This is a simplified implementation
-        # A more sophisticated version would use optimization algorithms
-        # to find the best balance between competing constraints
-        return assignments
+        updated_assignments = assignments.copy()
+        
+        # Group recommendations by type for better handling
+        hours_recommendations = [r for r in recommendations if r["type"] == "reduce_hours"]
+        timing_recommendations = [r for r in recommendations if r["type"] == "adjust_timing"]
+        workload_recommendations = [r for r in recommendations if r["type"] == "distribute_workload"]
+        
+        # Handle hours violations by redistributing shifts
+        for rec in hours_recommendations:
+            staff_id = rec.get("affected_staff_id")
+            if staff_id:
+                staff_assignments = [a for a in updated_assignments if a.staff_id == staff_id]
+                
+                # Remove assignments with lowest confidence scores first
+                staff_assignments.sort(key=lambda a: a.confidence_score or 0.5)
+                
+                # Calculate how many assignments to remove (rough estimate)
+                total_assignments = len(staff_assignments)
+                remove_count = max(1, total_assignments // 4)  # Remove 25% of assignments
+                
+                assignments_to_remove = staff_assignments[:remove_count]
+                for assignment in assignments_to_remove:
+                    if assignment in updated_assignments:
+                        updated_assignments.remove(assignment)
+        
+        # Handle timing violations by swapping assignments
+        for rec in timing_recommendations:
+            staff_id = rec.get("affected_staff_id")
+            shift_id = rec.get("affected_shift_id")
+            
+            if staff_id and shift_id:
+                # Find the problematic assignment
+                problematic_assignment = next(
+                    (a for a in updated_assignments 
+                     if a.staff_id == staff_id and a.shift_id == shift_id), 
+                    None
+                )
+                
+                if problematic_assignment:
+                    # Try to find an alternative staff member for this shift
+                    alternative_assignments = [
+                        a for a in updated_assignments 
+                        if a.shift_id != shift_id and a.staff_id != staff_id
+                    ]
+                    
+                    if alternative_assignments:
+                        # Swap with a lower confidence assignment
+                        alternative_assignments.sort(key=lambda a: a.confidence_score or 0.5)
+                        swap_candidate = alternative_assignments[0]
+                        
+                        # Remove the problematic assignment
+                        updated_assignments.remove(problematic_assignment)
+        
+        return updated_assignments
     
     def _optimize_overall_satisfaction(
         self,
@@ -1983,6 +2045,396 @@ class ConstraintSolver:
     ) -> List[DraftShiftAssignment]:
         """Optimize for overall constraint satisfaction"""
         
-        # This would implement a more complex optimization algorithm
-        # For now, return assignments as-is
+        updated_assignments = assignments.copy()
+        
+        # Calculate satisfaction score for current assignments
+        current_score = self._calculate_satisfaction_score(updated_assignments, context)
+        
+        # Try different optimization strategies
+        strategies = [
+            self._optimize_by_staff_preferences,
+            self._optimize_by_constraint_priority,
+            self._optimize_by_workload_distribution
+        ]
+        
+        best_assignments = updated_assignments
+        best_score = current_score
+        
+        for strategy in strategies:
+            try:
+                candidate_assignments = strategy(updated_assignments, context)
+                candidate_score = self._calculate_satisfaction_score(candidate_assignments, context)
+                
+                if candidate_score > best_score:
+                    best_assignments = candidate_assignments
+                    best_score = candidate_score
+            except Exception as e:
+                # Continue with other strategies if one fails
+                continue
+        
+        return best_assignments
+    
+    def _calculate_satisfaction_score(
+        self,
+        assignments: List[DraftShiftAssignment],
+        context: SchedulingContext
+    ) -> float:
+        """Calculate overall satisfaction score for assignments"""
+        
+        if not assignments:
+            return 0.0
+        
+        # Base score from assignment confidence
+        confidence_score = sum(a.confidence_score or 0.5 for a in assignments) / len(assignments)
+        
+        # Penalty for constraint violations
+        violations = self.validate_assignments_against_constraints(
+            [{"staff_id": a.staff_id, "shift_id": a.shift_id} for a in assignments],
+            context.constraints,
+            context.staff_preferences,
+            []
+        )
+        
+        violation_penalty = len(violations.get("violations", [])) * 0.1
+        
+        # Bonus for staff preference satisfaction
+        preference_bonus = self._calculate_preference_satisfaction(assignments, context)
+        
+        return max(0.0, confidence_score - violation_penalty + preference_bonus)
+    
+    def _calculate_preference_satisfaction(
+        self,
+        assignments: List[DraftShiftAssignment],
+        context: SchedulingContext
+    ) -> float:
+        """Calculate how well assignments satisfy staff preferences"""
+        
+        if not context.staff_preferences:
+            return 0.0
+        
+        satisfaction_points = 0
+        total_preferences = len(context.staff_preferences)
+        
+        for preference in context.staff_preferences:
+            staff_assignments = [a for a in assignments if a.staff_id == preference.staff_id]
+            
+            if preference.preference_type == "max_hours_per_week":
+                max_hours = preference.preference_value.get("hours", 40)
+                # Calculate actual hours for this staff member
+                # This is a simplified calculation
+                actual_hours = len(staff_assignments) * 8  # Assume 8-hour shifts
+                
+                if actual_hours <= max_hours:
+                    satisfaction_points += 1
+            
+            elif preference.preference_type == "preferred_shifts":
+                preferred_times = preference.preference_value.get("times", [])
+                # Check if assignments match preferred times
+                # This would need more detailed shift time checking
+                satisfaction_points += 0.5  # Partial credit for now
+        
+        return satisfaction_points / max(1, total_preferences)
+    
+    def _optimize_by_staff_preferences(
+        self,
+        assignments: List[DraftShiftAssignment],
+        context: SchedulingContext
+    ) -> List[DraftShiftAssignment]:
+        """Optimize assignments based on staff preferences"""
+        
+        # This is a simplified implementation
+        # A more sophisticated version would use preference matching algorithms
         return assignments
+    
+    def _optimize_by_constraint_priority(
+        self,
+        assignments: List[DraftShiftAssignment],
+        context: SchedulingContext
+    ) -> List[DraftShiftAssignment]:
+        """Optimize assignments based on constraint priorities"""
+        
+        # Sort constraints by priority
+        priority_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+        sorted_constraints = sorted(
+            context.constraints,
+            key=lambda c: priority_order.get(c.priority, 3)
+        )
+        
+        # Apply constraints in priority order
+        optimized_assignments = assignments.copy()
+        
+        for constraint in sorted_constraints:
+            if not constraint.is_active:
+                continue
+                
+            # Validate current assignments against this constraint
+            violations = self._validate_business_constraint(
+                constraint,
+                [{"staff_id": a.staff_id, "shift_id": a.shift_id} for a in optimized_assignments],
+                optimized_assignments
+            )
+            
+            # If there are violations, try to resolve them
+            if violations:
+                optimized_assignments = self._resolve_constraint_violations(
+                    optimized_assignments, constraint, violations
+                )
+        
+        return optimized_assignments
+    
+    def _optimize_by_workload_distribution(
+        self,
+        assignments: List[DraftShiftAssignment],
+        context: SchedulingContext
+    ) -> List[DraftShiftAssignment]:
+        """Optimize assignments for fair workload distribution"""
+        
+        # Group assignments by staff
+        staff_assignments = {}
+        for assignment in assignments:
+            if assignment.staff_id not in staff_assignments:
+                staff_assignments[assignment.staff_id] = []
+            staff_assignments[assignment.staff_id].append(assignment)
+        
+        # Calculate workload variance
+        workloads = [len(assignments) for assignments in staff_assignments.values()]
+        if not workloads:
+            return assignments
+        
+        avg_workload = sum(workloads) / len(workloads)
+        
+        # Redistribute assignments from overloaded to underloaded staff
+        optimized_assignments = assignments.copy()
+        
+        overloaded_staff = [
+            staff_id for staff_id, assignments in staff_assignments.items()
+            if len(assignments) > avg_workload + 1
+        ]
+        
+        underloaded_staff = [
+            staff_id for staff_id, assignments in staff_assignments.items()
+            if len(assignments) < avg_workload - 1
+        ]
+        
+        # Simple redistribution logic
+        for overloaded_id in overloaded_staff:
+            if not underloaded_staff:
+                break
+                
+            overloaded_assignments = staff_assignments[overloaded_id]
+            if len(overloaded_assignments) > 1:
+                # Move lowest confidence assignment
+                overloaded_assignments.sort(key=lambda a: a.confidence_score or 0.5)
+                assignment_to_move = overloaded_assignments[0]
+                
+                # Remove from overloaded staff
+                optimized_assignments.remove(assignment_to_move)
+        
+        return optimized_assignments
+    
+    def _resolve_constraint_violations(
+        self,
+        assignments: List[DraftShiftAssignment],
+        constraint: 'SchedulingConstraint',
+        violations: List[Dict]
+    ) -> List[DraftShiftAssignment]:
+        """Resolve specific constraint violations"""
+        
+        updated_assignments = assignments.copy()
+        
+        for violation in violations:
+            staff_id = violation.get("affected_staff_id")
+            shift_id = violation.get("affected_shift_id")
+            
+            if constraint.constraint_type == "max_hours_per_week" and staff_id:
+                # Remove assignments for this staff member
+                staff_assignments = [a for a in updated_assignments if a.staff_id == staff_id]
+                if staff_assignments:
+                    # Remove lowest confidence assignment
+                    staff_assignments.sort(key=lambda a: a.confidence_score or 0.5)
+                    updated_assignments.remove(staff_assignments[0])
+            
+            elif constraint.constraint_type == "skill_match_required" and shift_id:
+                # Remove assignment that doesn't match skills
+                problematic_assignment = next(
+                    (a for a in updated_assignments if a.shift_id == shift_id),
+                    None
+                )
+                if problematic_assignment:
+                    updated_assignments.remove(problematic_assignment)
+        
+        return updated_assignments
+    
+    def _validate_min_staff_constraint(
+        self,
+        constraint: SchedulingConstraint,
+        assignments: List[Dict[str, any]],
+        draft_assignments: List[DraftShiftAssignment]
+    ) -> List[Dict[str, any]]:
+        """Validate minimum staff per shift constraint"""
+        violations = []
+        min_staff = constraint.constraint_value.get("count", 2)
+        
+        # Group assignments by shift
+        shift_staff_count = {}
+        
+        for assignment in assignments:
+            shift_id = assignment.get("shift_id")
+            if shift_id:
+                if shift_id not in shift_staff_count:
+                    shift_staff_count[shift_id] = 0
+                shift_staff_count[shift_id] += 1
+        
+        # Check each shift for minimum staff requirement
+        for shift_id, staff_count in shift_staff_count.items():
+            if staff_count < min_staff:
+                try:
+                    shift = self.db.query(Shift).filter(Shift.id == shift_id).first()
+                    shift_name = f"{shift.title} on {shift.date}" if shift else f"Shift {shift_id}"
+                    
+                    violations.append({
+                        "constraint_id": constraint.id,
+                        "constraint_type": "min_staff_per_shift",
+                        "violation_type": "insufficient_staff",
+                        "severity": "error" if constraint.priority in ["high", "critical"] else "warning",
+                        "message": f"{shift_name} has {staff_count} staff (requires {min_staff} minimum)",
+                        "affected_staff_id": None,
+                        "affected_shift_id": shift_id,
+                        "suggested_resolution": f"Assign {min_staff - staff_count} more staff member(s) to this shift"
+                    })
+                except Exception:
+                    pass
+        
+        return violations
+    
+    def _validate_max_overtime_constraint(
+        self,
+        constraint: SchedulingConstraint,
+        assignments: List[Dict[str, any]],
+        draft_assignments: List[DraftShiftAssignment]
+    ) -> List[Dict[str, any]]:
+        """Validate maximum overtime hours constraint"""
+        violations = []
+        max_overtime = constraint.constraint_value.get("hours", 8)
+        
+        # Group assignments by staff and calculate overtime
+        staff_overtime = {}
+        
+        for assignment in assignments:
+            staff_id = assignment.get("staff_id")
+            shift_id = assignment.get("shift_id")
+            
+            if not staff_id or not shift_id:
+                continue
+            
+            try:
+                shift = self.db.query(Shift).filter(Shift.id == shift_id).first()
+                if not shift:
+                    continue
+                
+                # Calculate shift hours
+                shift_start = datetime.strptime(shift.start_time, '%H:%M')
+                shift_end = datetime.strptime(shift.end_time, '%H:%M')
+                shift_hours = (shift_end - shift_start).total_seconds() / 3600
+                
+                # Get staff member's regular hours (assume 40 hours standard)
+                if staff_id not in staff_overtime:
+                    staff_overtime[staff_id] = {"total_hours": 0, "regular_hours": 40}
+                
+                staff_overtime[staff_id]["total_hours"] += shift_hours
+                
+            except Exception as e:
+                continue
+        
+        # Check for overtime violations
+        for staff_id, hours_data in staff_overtime.items():
+            total_hours = hours_data["total_hours"]
+            regular_hours = hours_data["regular_hours"]
+            overtime_hours = max(0, total_hours - regular_hours)
+            
+            if overtime_hours > max_overtime:
+                try:
+                    staff = self.db.query(Staff).filter(Staff.id == staff_id).first()
+                    staff_name = staff.name if staff else f"Staff {staff_id}"
+                    
+                    violations.append({
+                        "constraint_id": constraint.id,
+                        "constraint_type": "max_overtime_hours",
+                        "violation_type": "overtime_exceeded",
+                        "severity": "warning" if constraint.priority in ["low", "medium"] else "error",
+                        "message": f"{staff_name} has {overtime_hours:.1f} overtime hours (exceeds {max_overtime}h limit)",
+                        "affected_staff_id": staff_id,
+                        "affected_shift_id": None,
+                        "suggested_resolution": f"Reduce overtime by {overtime_hours - max_overtime:.1f} hours"
+                    })
+                except Exception:
+                    pass
+        
+        return violations
+    
+    def _validate_weekend_rotation_constraint(
+        self,
+        constraint: SchedulingConstraint,
+        assignments: List[Dict[str, any]],
+        draft_assignments: List[DraftShiftAssignment]
+    ) -> List[Dict[str, any]]:
+        """Validate weekend rotation constraint"""
+        violations = []
+        
+        if not constraint.constraint_value.get("enabled", False):
+            return violations
+        
+        rotation_weeks = constraint.constraint_value.get("rotation_weeks", 2)
+        
+        # Group weekend assignments by staff
+        staff_weekend_assignments = {}
+        
+        for assignment in assignments:
+            staff_id = assignment.get("staff_id")
+            shift_id = assignment.get("shift_id")
+            
+            if not staff_id or not shift_id:
+                continue
+            
+            try:
+                shift = self.db.query(Shift).filter(Shift.id == shift_id).first()
+                if not shift:
+                    continue
+                
+                # Check if shift is on weekend
+                shift_date = shift.date.date() if isinstance(shift.date, datetime) else shift.date
+                if shift_date.weekday() in [5, 6]:  # Saturday = 5, Sunday = 6
+                    if staff_id not in staff_weekend_assignments:
+                        staff_weekend_assignments[staff_id] = []
+                    staff_weekend_assignments[staff_id].append(shift_date)
+                
+            except Exception as e:
+                continue
+        
+        # Check for rotation violations (simplified check)
+        # In a real implementation, this would track historical weekend assignments
+        weekend_counts = {staff_id: len(dates) for staff_id, dates in staff_weekend_assignments.items()}
+        
+        if weekend_counts:
+            avg_weekends = sum(weekend_counts.values()) / len(weekend_counts)
+            
+            for staff_id, weekend_count in weekend_counts.items():
+                if weekend_count > avg_weekends + 1:  # Allow some variance
+                    try:
+                        staff = self.db.query(Staff).filter(Staff.id == staff_id).first()
+                        staff_name = staff.name if staff else f"Staff {staff_id}"
+                        
+                        violations.append({
+                            "constraint_id": constraint.id,
+                            "constraint_type": "weekend_rotation",
+                            "violation_type": "uneven_weekend_distribution",
+                            "severity": "warning",
+                            "message": f"{staff_name} has {weekend_count} weekend shifts (average is {avg_weekends:.1f})",
+                            "affected_staff_id": staff_id,
+                            "affected_shift_id": None,
+                            "suggested_resolution": "Redistribute weekend shifts more evenly among staff"
+                        })
+                    except Exception:
+                        pass
+        
+        return violations

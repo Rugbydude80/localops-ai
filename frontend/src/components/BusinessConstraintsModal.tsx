@@ -130,6 +130,14 @@ export default function BusinessConstraintsModal({ businessId, onClose }: Busine
         return constraint.constraint_value.required ? 'Required' : 'Preferred'
       case 'fair_distribution':
         return constraint.constraint_value.enabled ? 'Enabled' : 'Disabled'
+      case 'min_staff_per_shift':
+        return `${constraint.constraint_value.count || 2} staff minimum per shift`
+      case 'max_overtime_hours':
+        return `${constraint.constraint_value.hours || 8} overtime hours maximum per week`
+      case 'weekend_rotation':
+        return constraint.constraint_value.enabled 
+          ? `Enabled (${constraint.constraint_value.rotation_weeks || 2} week rotation)` 
+          : 'Disabled'
       default:
         return JSON.stringify(constraint.constraint_value)
     }
@@ -249,6 +257,99 @@ export default function BusinessConstraintsModal({ businessId, onClose }: Busine
           </div>
         )
       
+      case 'min_staff_per_shift':
+        return (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Minimum Staff Members per Shift
+            </label>
+            <input
+              type="number"
+              min="1"
+              max="20"
+              value={newConstraint.constraint_value.count || 2}
+              onChange={(e) => setNewConstraint({
+                ...newConstraint,
+                constraint_value: { count: parseInt(e.target.value) || 2 }
+              })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Ensures adequate coverage for each shift
+            </p>
+          </div>
+        )
+      
+      case 'max_overtime_hours':
+        return (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Maximum Overtime Hours per Week
+            </label>
+            <input
+              type="number"
+              min="0"
+              max="20"
+              value={newConstraint.constraint_value.hours || 8}
+              onChange={(e) => setNewConstraint({
+                ...newConstraint,
+                constraint_value: { hours: parseInt(e.target.value) || 8 }
+              })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Controls overtime costs and staff wellbeing
+            </p>
+          </div>
+        )
+      
+      case 'weekend_rotation':
+        return (
+          <div>
+            <label className="flex items-center">
+              <input
+                type="checkbox"
+                checked={newConstraint.constraint_value.enabled || false}
+                onChange={(e) => setNewConstraint({
+                  ...newConstraint,
+                  constraint_value: { 
+                    enabled: e.target.checked,
+                    rotation_weeks: newConstraint.constraint_value.rotation_weeks || 2
+                  }
+                })}
+                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span className="ml-2 text-sm text-gray-700">
+                Enable weekend rotation among staff
+              </span>
+            </label>
+            {newConstraint.constraint_value.enabled && (
+              <div className="mt-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Rotation Period (weeks)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="8"
+                  value={newConstraint.constraint_value.rotation_weeks || 2}
+                  onChange={(e) => setNewConstraint({
+                    ...newConstraint,
+                    constraint_value: { 
+                      enabled: true,
+                      rotation_weeks: parseInt(e.target.value) || 2
+                    }
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+            )}
+            <p className="text-xs text-gray-500 mt-1">
+              Ensures fair distribution of weekend shifts
+            </p>
+          </div>
+        )
+      
       default:
         return (
           <div>
@@ -290,6 +391,9 @@ export default function BusinessConstraintsModal({ businessId, onClose }: Busine
       case 'max_consecutive_days': return 'Maximum Consecutive Days'
       case 'skill_match_required': return 'Skill Match Requirement'
       case 'fair_distribution': return 'Fair Distribution'
+      case 'min_staff_per_shift': return 'Minimum Staff per Shift'
+      case 'max_overtime_hours': return 'Maximum Overtime Hours'
+      case 'weekend_rotation': return 'Weekend Rotation'
       default: return type.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())
     }
   }
@@ -418,6 +522,29 @@ export default function BusinessConstraintsModal({ businessId, onClose }: Busine
             </div>
           )}
 
+          {/* Conflict Resolution Section */}
+          {constraints.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+              <div className="flex items-start">
+                <ExclamationTriangleIcon className="h-5 w-5 text-amber-400 mt-0.5 mr-2" />
+                <div className="flex-1">
+                  <h3 className="text-sm font-medium text-amber-800">Constraint Conflict Resolution</h3>
+                  <p className="text-sm text-amber-700 mt-1">
+                    When constraints conflict during scheduling, the system will prioritize based on the priority levels you've set.
+                  </p>
+                  <div className="mt-3 text-xs text-amber-600">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div><strong>Critical:</strong> Must be enforced - violations will prevent scheduling</div>
+                      <div><strong>High:</strong> Strongly enforced - violations will generate warnings</div>
+                      <div><strong>Medium:</strong> Balanced consideration - may be relaxed if needed</div>
+                      <div><strong>Low:</strong> Soft preferences - will be considered but not enforced</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Add Constraint Form */}
           {showAddConstraint && (
             <div className="border border-gray-200 rounded-lg p-4">
@@ -442,6 +569,9 @@ export default function BusinessConstraintsModal({ businessId, onClose }: Busine
                     <option value="max_consecutive_days">Maximum Consecutive Days</option>
                     <option value="skill_match_required">Skill Match Requirement</option>
                     <option value="fair_distribution">Fair Distribution</option>
+                    <option value="min_staff_per_shift">Minimum Staff per Shift</option>
+                    <option value="max_overtime_hours">Maximum Overtime Hours</option>
+                    <option value="weekend_rotation">Weekend Rotation</option>
                   </select>
                 </div>
 

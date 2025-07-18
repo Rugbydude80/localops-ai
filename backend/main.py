@@ -2644,13 +2644,13 @@ async def retry_failed_notifications(
     try:
         notification_service = NotificationService(db)
         
-        channels = None
+        notification_ids = None
         if retry_request:
-            channels = retry_request.get("channels")
+            notification_ids = retry_request.get("notification_ids")
         
         result = await notification_service.retry_failed_notifications(
             draft_id=draft_id,
-            channels=channels
+            notification_ids=notification_ids
         )
         
         return result
@@ -2778,6 +2778,48 @@ async def test_notification_channels(
         }
         
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/notifications/webhook/delivery-status")
+async def notification_delivery_webhook(
+    webhook_data: Dict[str, Any],
+    db: Session = Depends(get_db)
+):
+    """Webhook endpoint for notification delivery status updates from external services"""
+    
+    try:
+        notification_service = NotificationService(db)
+        
+        # Extract webhook data (format may vary by provider)
+        external_id = webhook_data.get("message_id") or webhook_data.get("external_id")
+        status = webhook_data.get("status")
+        delivered_at_str = webhook_data.get("delivered_at")
+        
+        if not external_id or not status:
+            raise HTTPException(status_code=400, detail="message_id and status are required")
+        
+        # Parse delivered_at if provided
+        delivered_at = None
+        if delivered_at_str:
+            try:
+                delivered_at = datetime.fromisoformat(delivered_at_str.replace('Z', '+00:00'))
+            except ValueError:
+                logger.warning(f"Invalid delivered_at format: {delivered_at_str}")
+        
+        # Update notification status
+        success = await notification_service.update_delivery_status(
+            external_id=external_id,
+            status=status,
+            delivered_at=delivered_at
+        )
+        
+        if success:
+            return {"success": True, "message": "Delivery status updated"}
+        else:
+            return {"success": False, "message": "Notification not found or invalid status"}
+        
+    except Exception as e:
+        logger.error(f"Webhook processing failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Staff Preference Management Endpoints
@@ -3131,6 +3173,118 @@ async def validate_scheduling_constraints(
         total_violations=len(violations),
         total_warnings=len(warnings)
     )
+
+# Conflict Resolution Endpoint
+@app.post("/api/business/{business_id}/resolve-conflicts")
+async def resolve_scheduling_conflicts(
+    business_id: int,
+    request: ConstraintValidationRequest,
+    db: Session = Depends(get_db)
+):
+    """Resolve scheduling conflicts based on constraint priorities and business rules"""
+    
+    from models import SchedulingConstraint, StaffPreference, DraftShiftAssignment
+    from services.constraint_solver import ConstraintSolver, SchedulingContext
+    from datetime import date, timedelta
+    
+    try:
+        # Verify business exists
+        business = db.query(Business).filter(Business.id == business_id).first()
+        if not business:
+            raise HTTPException(status_code=404, detail="Business not found")
+        
+        # Get business constraints
+        constraints = db.query(SchedulingConstraint).filter(
+            SchedulingConstraint.business_id == business_id,
+            SchedulingConstraint.is_active == True
+        ).all()
+        
+        # Get staff preferences
+        staff_ids = [assignment.get("staff_id") for assignment in request.assignments if assignment.get("staff_id")]
+        staff_preferences = db.query(StaffPreference).filter(
+            StaffPreference.staff_id.in_(staff_ids),
+            StaffPreference.is_active == True
+        ).all() if staff_ids else []
+        
+        # Create scheduling context
+        context = SchedulingContext(
+            business_id=business_id,
+            constraints=constraints,
+            staff_preferences=staff_preferences,
+            date_range_start=date.today(),
+            date_range_end=date.today() + timedelta(days=7)
+        )
+        
+        # Initialize constraint solver
+        solver = ConstraintSolver(db)
+        
+        # First, validate current assignments to find violations
+        validation_result = solver.validate_assignments_against_constraints(
+            request.assignments,
+            constraints,
+            staff_preferences,
+            []
+        )
+        
+        violations = validation_result.get("violations", [])
+        
+        if not violations:
+            return {
+                "status": "no_conflicts",
+                "resolution_strategy": "none",
+                "recommendations": [],
+                "updated_assignments": request.assignments,
+                "violation_summary": {
+                    "critical": 0,
+                    "high": 0,
+                    "medium": 0,
+                    "low": 0
+                }
+            }
+        
+        # Resolve conflicts
+        resolution_result = solver.resolve_constraint_conflicts(violations, context)
+        
+        # Apply conflict resolution if we have draft assignments
+        updated_assignments = request.assignments
+        if hasattr(request, 'draft_id') and request.draft_id:
+            # Get draft assignments
+            draft_assignments = db.query(DraftShiftAssignment).filter(
+                DraftShiftAssignment.draft_id == request.draft_id
+            ).all()
+            
+            if draft_assignments:
+                resolved_assignments = solver.apply_conflict_resolution(
+                    draft_assignments,
+                    resolution_result["resolution_strategy"],
+                    resolution_result["recommendations"],
+                    context
+                )
+                
+                # Convert back to assignment format
+                updated_assignments = [
+                    {
+                        "staff_id": a.staff_id,
+                        "shift_id": a.shift_id,
+                        "confidence_score": a.confidence_score
+                    }
+                    for a in resolved_assignments
+                ]
+        
+        return {
+            "status": resolution_result["status"],
+            "resolution_strategy": resolution_result["resolution_strategy"],
+            "recommendations": resolution_result["recommendations"],
+            "updated_assignments": updated_assignments,
+            "violation_summary": resolution_result["violation_summary"]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error resolving scheduling conflicts: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to resolve scheduling conflicts: {str(e)}"
+        )
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8001)
