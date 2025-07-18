@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import Head from 'next/head'
-import { CalendarIcon, PlusIcon, UserGroupIcon, ExclamationTriangleIcon, ClockIcon, LockClosedIcon, ShieldCheckIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline'
+import { CalendarIcon, PlusIcon, UserGroupIcon, ExclamationTriangleIcon, ClockIcon, LockClosedIcon, ShieldCheckIcon, ChatBubbleLeftRightIcon, CogIcon } from '@heroicons/react/24/outline'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { format, parseISO, startOfWeek, endOfWeek, addDays, isSameDay } from 'date-fns'
@@ -9,6 +9,8 @@ import { usePermissions, RoleBadge } from '../hooks/usePermissions'
 import { useNotifications } from '../hooks/useNotifications'
 import ChatSystem from '../components/ChatSystem'
 import ExcelImportExport from '../components/ExcelImportExport'
+import AutoScheduleModal from '../components/AutoScheduleModal'
+import BusinessConstraintsModal from '../components/BusinessConstraintsModal'
 
 // Types
 interface Shift {
@@ -171,6 +173,8 @@ export default function ShiftsPage() {
   const [showCreateShift, setShowCreateShift] = useState(false)
   const [showAssignStaff, setShowAssignStaff] = useState(false)
   const [showChat, setShowChat] = useState(false)
+  const [showAutoSchedule, setShowAutoSchedule] = useState(false)
+  const [showConstraintsModal, setShowConstraintsModal] = useState(false)
   const [selectedShift, setSelectedShift] = useState<Shift | null>(null)
   const queryClient = useQueryClient()
   const notifications = useNotifications()
@@ -238,6 +242,20 @@ export default function ShiftsPage() {
     }
   })
 
+  // Auto-schedule handler
+  const handleAutoSchedule = async (params: any) => {
+    try {
+      // This would call the backend auto-schedule API
+      console.log('Auto-schedule parameters:', params)
+      toast.success('Auto-schedule generation started!')
+      // For now, just close the modal
+      setShowAutoSchedule(false)
+    } catch (error) {
+      console.error('Auto-schedule failed:', error)
+      throw error
+    }
+  }
+
   // Generate week days for calendar view
   const getWeekDays = () => {
     const days = []
@@ -256,6 +274,40 @@ export default function ShiftsPage() {
     return shifts.filter(shift => 
       isSameDay(parseISO(shift.date), date)
     ).sort((a, b) => a.start_time.localeCompare(b.start_time))
+  }
+
+  // Traffic Light System for Shift Coverage
+  const getTrafficLightStatus = (shift: Shift) => {
+    const assignedCount = shift.assignments.filter(a => a.status === 'assigned').length
+    const sickCount = shift.assignments.filter(a => a.status === 'called_in_sick').length
+    const requiredCount = shift.required_staff_count
+    const actualStaffing = assignedCount - sickCount
+    
+    if (actualStaffing >= requiredCount) {
+      return 'green' // Fully staffed
+    } else if (actualStaffing >= Math.ceil(requiredCount * 0.7)) {
+      return 'amber' // Partially staffed (70%+ coverage)
+    } else {
+      return 'red' // Understaffed (less than 70% coverage)
+    }
+  }
+
+  const getTrafficLightColor = (status: string) => {
+    switch (status) {
+      case 'green': return 'bg-green-100 text-green-800 border-green-200 border-l-green-500'
+      case 'amber': return 'bg-amber-100 text-amber-800 border-amber-200 border-l-amber-500'
+      case 'red': return 'bg-red-100 text-red-800 border-red-200 border-l-red-500'
+      default: return 'bg-gray-100 text-gray-800 border-gray-200 border-l-gray-500'
+    }
+  }
+
+  const getTrafficLightIcon = (status: string) => {
+    switch (status) {
+      case 'green': return '🟢'
+      case 'amber': return '🟡'
+      case 'red': return '🔴'
+      default: return '⚪'
+    }
   }
 
   const getStatusColor = (status: string) => {
@@ -325,6 +377,24 @@ export default function ShiftsPage() {
                 >
                   <ChatBubbleLeftRightIcon className="h-4 w-4 mr-2" />
                   Chat
+                </button>
+
+                {/* Constraints Configuration Button */}
+                <button
+                  onClick={() => setShowConstraintsModal(true)}
+                  className="inline-flex items-center px-3 py-2 bg-white text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 shadow-sm"
+                  title="Configure scheduling constraints"
+                >
+                  <CogIcon className="h-4 w-4 mr-2" />
+                  Constraints
+                </button>
+
+                <button
+                  onClick={() => setShowAutoSchedule(true)}
+                  className="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 shadow-sm"
+                >
+                  <ClockIcon className="h-4 w-4 mr-2" />
+                  Auto-Schedule
                 </button>
 
                 <button
@@ -397,46 +467,105 @@ export default function ShiftsPage() {
                     </div>
                     
                     <div className="p-2 space-y-1 min-h-[200px]">
-                      {dayShifts.map(shift => (
-                        <div
-                          key={shift.id}
-                          className={`p-2 rounded-md border text-xs cursor-pointer hover:shadow-sm ${getStatusColor(shift.status)}`}
-                          onClick={() => {
-                            setSelectedShift(shift)
-                            setShowAssignStaff(true)
-                          }}
-                        >
-                          <div className="font-medium truncate">{shift.title}</div>
-                          <div className="text-xs opacity-75">
-                            {shift.start_time}-{shift.end_time}
-                          </div>
-                          <div className="flex items-center justify-between mt-1">
-                            <span className="capitalize text-xs">
-                              {shift.required_skill.replace('_', ' ')}
-                            </span>
-                            <span className="text-xs">
-                              {shift.assignments.length}/{shift.required_staff_count}
-                            </span>
-                          </div>
-                          
-                          {shift.assignments.length > 0 && (
-                            <div className="mt-1 space-y-1">
-                              {shift.assignments.map(assignment => (
-                                <div key={assignment.id} className="flex items-center justify-between">
-                                  <span className="text-xs truncate">{assignment.staff_name}</span>
-                                  {assignment.status === 'called_in_sick' && (
-                                    <ExclamationTriangleIcon className="h-3 w-3 text-red-500" />
-                                  )}
-                                </div>
-                              ))}
+                      {dayShifts.map(shift => {
+                        const trafficLightStatus = getTrafficLightStatus(shift)
+                        const assignedCount = shift.assignments.filter(a => a.status === 'assigned').length
+                        const sickCount = shift.assignments.filter(a => a.status === 'called_in_sick').length
+                        const actualStaffing = assignedCount - sickCount
+                        
+                        return (
+                          <div
+                            key={shift.id}
+                            className={`p-2 rounded-md border-l-4 border text-xs cursor-pointer hover:shadow-sm transition-all duration-200 ${getTrafficLightColor(trafficLightStatus)}`}
+                            onClick={() => {
+                              setSelectedShift(shift)
+                              setShowAssignStaff(true)
+                            }}
+                          >
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="font-medium truncate">{shift.title}</div>
+                              <span className="text-lg">{getTrafficLightIcon(trafficLightStatus)}</span>
                             </div>
-                          )}
-                        </div>
-                      ))}
+                            <div className="text-xs opacity-75 mb-1">
+                              {shift.start_time}-{shift.end_time}
+                            </div>
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="capitalize text-xs">
+                                {shift.required_skill.replace('_', ' ')}
+                              </span>
+                              <span className={`text-xs font-medium ${
+                                actualStaffing >= shift.required_staff_count ? 'text-green-600' :
+                                actualStaffing >= Math.ceil(shift.required_staff_count * 0.7) ? 'text-amber-600' :
+                                'text-red-600'
+                              }`}>
+                                {actualStaffing}/{shift.required_staff_count}
+                              </span>
+                            </div>
+                            
+                            {/* Coverage Status Bar */}
+                            <div className="w-full bg-gray-200 rounded-full h-1.5 mb-2">
+                              <div 
+                                className={`h-1.5 rounded-full transition-all duration-300 ${
+                                  trafficLightStatus === 'green' ? 'bg-green-500' :
+                                  trafficLightStatus === 'amber' ? 'bg-amber-500' :
+                                  'bg-red-500'
+                                }`}
+                                style={{ 
+                                  width: `${Math.min(100, (actualStaffing / shift.required_staff_count) * 100)}%` 
+                                }}
+                              />
+                            </div>
+                            
+                            {shift.assignments.length > 0 && (
+                              <div className="mt-1 space-y-1">
+                                {shift.assignments.map(assignment => (
+                                  <div key={assignment.id} className="flex items-center justify-between">
+                                    <span className="text-xs truncate">{assignment.staff_name}</span>
+                                    {assignment.status === 'called_in_sick' ? (
+                                      <span className="text-xs text-red-600 font-medium">🤒 Sick</span>
+                                    ) : (
+                                      <span className="text-xs text-green-600 font-medium">✓</span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            
+                            {/* Quick status indicator */}
+                            <div className="mt-1 text-xs font-medium">
+                              {trafficLightStatus === 'green' && '✅ Fully Staffed'}
+                              {trafficLightStatus === 'amber' && '⚠️ Partially Staffed'}
+                              {trafficLightStatus === 'red' && '🚨 Understaffed'}
+                            </div>
+                          </div>
+                        )
+                      })}
                     </div>
                   </div>
                 )
               })}
+            </div>
+          </div>
+
+          {/* Traffic Light Legend */}
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mt-6">
+            <h3 className="text-sm font-semibold text-gray-900 mb-3">Coverage Status Guide</h3>
+            <div className="flex flex-wrap gap-4 text-xs">
+              <div className="flex items-center space-x-2">
+                <span className="text-lg">🟢</span>
+                <span className="text-green-700 font-medium">Fully Staffed</span>
+                <span className="text-gray-500">(100% coverage)</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <span className="text-lg">🟡</span>
+                <span className="text-amber-700 font-medium">Partially Staffed</span>
+                <span className="text-gray-500">(70-99% coverage)</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <span className="text-lg">🔴</span>
+                <span className="text-red-700 font-medium">Understaffed</span>
+                <span className="text-gray-500">(&lt;70% coverage)</span>
+              </div>
             </div>
           </div>
 
@@ -900,6 +1029,23 @@ function AssignStaffModal({ shift, staff, onClose, onAssign, onReportSick, isLoa
             }}
           />
         </div>
+
+        {/* Auto-Schedule Modal */}
+        <AutoScheduleModal
+          isOpen={showAutoSchedule}
+          onClose={() => setShowAutoSchedule(false)}
+          onConfirm={handleAutoSchedule}
+          businessId={businessId}
+          staff={staff.map(s => ({ id: s.id, name: s.name }))}
+        />
+
+        {/* Business Constraints Modal */}
+        {showConstraintsModal && (
+          <BusinessConstraintsModal
+            businessId={businessId}
+            onClose={() => setShowConstraintsModal(false)}
+          />
+        )}
       </div>
     </div>
   )

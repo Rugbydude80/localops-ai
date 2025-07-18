@@ -491,3 +491,92 @@ class StaffPerformanceMetric(Base):
     negative_mentions = Column(Integer, default=0)
     training_completion_rate = Column(Float)
     skill_improvement_score = Column(Float)
+
+# Auto-Scheduling System Models
+class ScheduleDraft(Base):
+    __tablename__ = "schedule_drafts"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
+    created_by = Column(Integer, ForeignKey("staff.id"), nullable=False)
+    date_range_start = Column(Date, nullable=False, index=True)
+    date_range_end = Column(Date, nullable=False, index=True)
+    status = Column(String, default="draft", index=True)  # draft, published, archived
+    ai_generated = Column(Boolean, default=False)
+    generation_params = Column(JSON)  # Parameters used for AI generation
+    confidence_score = Column(Float)  # Overall confidence in the schedule
+    created_at = Column(DateTime, default=datetime.now, index=True)
+    published_at = Column(DateTime)
+    
+    # Relationships
+    business = relationship("Business")
+    creator = relationship("Staff", foreign_keys=[created_by])
+    draft_assignments = relationship("DraftShiftAssignment", back_populates="draft", cascade="all, delete-orphan")
+    notifications = relationship("ScheduleNotification", back_populates="draft", cascade="all, delete-orphan")
+
+class DraftShiftAssignment(Base):
+    __tablename__ = "draft_shift_assignments"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    draft_id = Column(String, ForeignKey("schedule_drafts.id"), nullable=False, index=True)
+    shift_id = Column(Integer, ForeignKey("shifts.id"), nullable=False, index=True)
+    staff_id = Column(Integer, ForeignKey("staff.id"), nullable=False, index=True)
+    confidence_score = Column(Float, default=0.8)  # AI confidence in assignment
+    reasoning = Column(Text)  # Human-readable explanation
+    is_ai_generated = Column(Boolean, default=True)
+    manual_override = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.now)
+    
+    # Relationships
+    draft = relationship("ScheduleDraft", back_populates="draft_assignments")
+    shift = relationship("Shift")
+    staff = relationship("Staff")
+
+class SchedulingConstraint(Base):
+    __tablename__ = "scheduling_constraints"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
+    constraint_type = Column(String, nullable=False, index=True)  # max_hours, min_rest, skill_match
+    constraint_value = Column(JSON, nullable=False)  # Constraint parameters
+    priority = Column(String, default="medium")  # low, medium, high, critical
+    is_active = Column(Boolean, default=True, index=True)
+    created_at = Column(DateTime, default=datetime.now)
+    
+    # Relationships
+    business = relationship("Business")
+
+class StaffPreference(Base):
+    __tablename__ = "staff_preferences"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    staff_id = Column(Integer, ForeignKey("staff.id"), nullable=False, index=True)
+    preference_type = Column(String, nullable=False, index=True)  # shift_time, day_off, max_hours
+    preference_value = Column(JSON, nullable=False)
+    priority = Column(String, default="medium")  # low, medium, high
+    effective_date = Column(Date, index=True)
+    expiry_date = Column(Date, index=True)
+    is_active = Column(Boolean, default=True, index=True)
+    created_at = Column(DateTime, default=datetime.now)
+    
+    # Relationships
+    staff = relationship("Staff")
+
+class ScheduleNotification(Base):
+    __tablename__ = "schedule_notifications"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    draft_id = Column(String, ForeignKey("schedule_drafts.id"), nullable=False, index=True)
+    staff_id = Column(Integer, ForeignKey("staff.id"), nullable=False, index=True)
+    notification_type = Column(String, nullable=False, index=True)  # new_schedule, schedule_change
+    channel = Column(String, nullable=False)  # whatsapp, sms, email
+    content = Column(Text, nullable=False)
+    status = Column(String, default="pending", index=True)  # pending, sent, delivered, failed
+    sent_at = Column(DateTime, index=True)
+    delivered_at = Column(DateTime)
+    external_id = Column(String)  # External service message ID
+    created_at = Column(DateTime, default=datetime.now)
+    
+    # Relationships
+    draft = relationship("ScheduleDraft", back_populates="notifications")
+    staff = relationship("Staff")

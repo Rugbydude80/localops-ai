@@ -1,5 +1,6 @@
+import os
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from sqlalchemy.orm import Session
 from models import SmartMessage, MessageDelivery, Staff, Business
 from services.ai import AIService
@@ -380,3 +381,113 @@ class SmartCommunicationHub:
                 recommendations.append(f"Avoid {channel} for urgent messages (avg response: {stats['avg_response_time_minutes']:.0f} min)")
         
         return recommendations
+
+
+class EmailService:
+    """Email service for sending schedule notifications"""
+    
+    def __init__(self):
+        self.smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+        self.smtp_port = int(os.getenv("SMTP_PORT", "587"))
+        self.smtp_username = os.getenv("SMTP_USERNAME")
+        self.smtp_password = os.getenv("SMTP_PASSWORD")
+        self.from_email = os.getenv("FROM_EMAIL", self.smtp_username)
+        
+        if not all([self.smtp_username, self.smtp_password]):
+            print("Email credentials not configured. Email notifications will be simulated.")
+            self.enabled = False
+        else:
+            self.enabled = True
+    
+    async def send_email(
+        self,
+        to_email: str,
+        subject: str,
+        content: str,
+        staff_name: str = "Team Member"
+    ) -> Dict[str, Any]:
+        """Send email notification"""
+        
+        if not self.enabled:
+            print(f"SIMULATED Email to {to_email}: {subject}")
+            return {
+                "success": True,
+                "message_id": f"sim_email_{datetime.now().timestamp()}",
+                "simulated": True
+            }
+        
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            from email.mime.multipart import MIMEMultipart
+            
+            # Create message
+            msg = MIMEMultipart()
+            msg['From'] = self.from_email
+            msg['To'] = to_email
+            msg['Subject'] = subject
+            
+            # Format content as HTML
+            html_content = self._format_email_content(content, staff_name)
+            msg.attach(MIMEText(html_content, 'html'))
+            
+            # Send email
+            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
+            server.starttls()
+            server.login(self.smtp_username, self.smtp_password)
+            
+            text = msg.as_string()
+            server.sendmail(self.from_email, to_email, text)
+            server.quit()
+            
+            return {
+                "success": True,
+                "message_id": f"email_{datetime.now().timestamp()}"
+            }
+            
+        except Exception as e:
+            print(f"Email sending failed: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    def _format_email_content(self, content: str, staff_name: str) -> str:
+        """Format plain text content as HTML email"""
+        
+        # Convert line breaks to HTML
+        html_content = content.replace('\n', '<br>')
+        
+        # Basic HTML template
+        html_template = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <title>Schedule Notification</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{ background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin-bottom: 20px; }}
+                .content {{ padding: 20px; }}
+                .footer {{ background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin-top: 20px; font-size: 12px; color: #666; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h2>Schedule Notification</h2>
+                </div>
+                <div class="content">
+                    {html_content}
+                </div>
+                <div class="footer">
+                    <p>This is an automated message. Please do not reply to this email.</p>
+                    <p>If you have questions, contact your manager directly.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        return html_template

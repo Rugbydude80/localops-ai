@@ -586,6 +586,40 @@ export default function DashboardPage() {
     return shiftDate > today && shiftDate <= threeDaysFromNow
   }).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
 
+  // Traffic Light System for Shift Coverage
+  const getTrafficLightStatus = (shift: Shift) => {
+    const assignedCount = shift.assignments.filter(a => a.status === 'assigned').length
+    const sickCount = shift.assignments.filter(a => a.status === 'called_in_sick').length
+    const requiredCount = shift.required_staff_count
+    const actualStaffing = assignedCount - sickCount
+    
+    if (actualStaffing >= requiredCount) {
+      return 'green' // Fully staffed
+    } else if (actualStaffing >= Math.ceil(requiredCount * 0.7)) {
+      return 'amber' // Partially staffed (70%+ coverage)
+    } else {
+      return 'red' // Understaffed (less than 70% coverage)
+    }
+  }
+
+  const getTrafficLightColor = (status: string) => {
+    switch (status) {
+      case 'green': return 'bg-green-100 text-green-800 border-green-200 border-l-green-500'
+      case 'amber': return 'bg-amber-100 text-amber-800 border-amber-200 border-l-amber-500'
+      case 'red': return 'bg-red-100 text-red-800 border-red-200 border-l-red-500'
+      default: return 'bg-gray-100 text-gray-800 border-gray-200 border-l-gray-500'
+    }
+  }
+
+  const getTrafficLightIcon = (status: string) => {
+    switch (status) {
+      case 'green': return '🟢'
+      case 'amber': return '🟡'
+      case 'red': return '🔴'
+      default: return '⚪'
+    }
+  }
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'filled': return 'bg-green-100 text-green-800 border-green-200'
@@ -726,26 +760,68 @@ export default function DashboardPage() {
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {todayShifts.map(shift => (
-                        <div 
-                          key={shift.id} 
-                          className={`p-4 rounded-lg border cursor-pointer hover:shadow-md transition-all duration-200 ${getStatusColor(shift.status)}`}
-                          onClick={() => setSelectedShift(shift)}
-                        >
-                          <div className="flex justify-between items-start mb-2">
-                            <h3 className="font-semibold text-gray-900">{shift.title}</h3>
-                            <span className="text-xs font-medium px-2 py-1 rounded-full bg-white bg-opacity-50">
-                              {shift.status}
-                            </span>
+                      {todayShifts.map(shift => {
+                        const trafficLightStatus = getTrafficLightStatus(shift)
+                        const assignedCount = shift.assignments.filter(a => a.status === 'assigned').length
+                        const sickCount = shift.assignments.filter(a => a.status === 'called_in_sick').length
+                        const actualStaffing = assignedCount - sickCount
+                        
+                        return (
+                          <div 
+                            key={shift.id} 
+                            className={`p-4 rounded-lg border-l-4 border cursor-pointer hover:shadow-md transition-all duration-200 ${getTrafficLightColor(trafficLightStatus)}`}
+                            onClick={() => setSelectedShift(shift)}
+                          >
+                            <div className="flex justify-between items-start mb-2">
+                              <h3 className="font-semibold text-gray-900">{shift.title}</h3>
+                              <div className="flex items-center space-x-2">
+                                <span className="text-lg">{getTrafficLightIcon(trafficLightStatus)}</span>
+                                <span className="text-xs font-medium px-2 py-1 rounded-full bg-white bg-opacity-50">
+                                  {shift.status}
+                                </span>
+                              </div>
+                            </div>
                           </div>
                           <p className="text-sm text-gray-600 mb-2">
                             {shift.start_time} - {shift.end_time}
                           </p>
-                          <div className="flex justify-between items-center text-xs">
+                          <div className="flex justify-between items-center text-xs mb-2">
                             <span className="capitalize">{shift.required_skill.replace('_', ' ')}</span>
-                            <span>{shift.assignments?.length || 0}/{shift.required_staff_count} staff</span>
+                            <span className={`font-medium ${
+                              actualStaffing >= shift.required_staff_count ? 'text-green-600' :
+                              actualStaffing >= Math.ceil(shift.required_staff_count * 0.7) ? 'text-amber-600' :
+                              'text-red-600'
+                            }`}>
+                              {actualStaffing}/{shift.required_staff_count}
+                            </span>
                           </div>
-                          <p className="text-xs text-blue-600 mt-2 font-medium">Click to manage staff</p>
+                          
+                          {/* Coverage Status Bar */}
+                          <div className="w-full bg-gray-200 rounded-full h-1.5 mb-2">
+                            <div 
+                              className={`h-1.5 rounded-full transition-all duration-300 ${
+                                trafficLightStatus === 'green' ? 'bg-green-500' :
+                                trafficLightStatus === 'amber' ? 'bg-amber-500' :
+                                'bg-red-500'
+                              }`}
+                              style={{ 
+                                width: `${Math.min(100, (actualStaffing / shift.required_staff_count) * 100)}%` 
+                              }}
+                            />
+                          </div>
+                          
+                          <div className="flex justify-between items-center text-xs">
+                            <span className={`font-medium ${
+                              trafficLightStatus === 'green' ? 'text-green-600' :
+                              trafficLightStatus === 'amber' ? 'text-amber-600' :
+                              'text-red-600'
+                            }`}>
+                              {trafficLightStatus === 'green' && '✅ Fully Staffed'}
+                              {trafficLightStatus === 'amber' && '⚠️ Partially Staffed'}
+                              {trafficLightStatus === 'red' && '🚨 Understaffed'}
+                            </span>
+                            <span className="text-blue-600 font-medium">Click to manage</span>
+                          </div>
                         </div>
                       ))}
                     </div>
