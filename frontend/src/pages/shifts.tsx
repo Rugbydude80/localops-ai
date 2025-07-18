@@ -4,13 +4,13 @@ import { CalendarIcon, PlusIcon, UserGroupIcon, ExclamationTriangleIcon, ClockIc
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { format, parseISO, startOfWeek, endOfWeek, addDays, isSameDay } from 'date-fns'
-import { supabase, Staff } from '../../lib/supabase'
 import { usePermissions, RoleBadge } from '../hooks/usePermissions'
 import { useNotifications } from '../hooks/useNotifications'
 import ChatSystem from '../components/ChatSystem'
 import ExcelImportExport from '../components/ExcelImportExport'
 import AutoScheduleModal from '../components/AutoScheduleModal'
 import BusinessConstraintsModal from '../components/BusinessConstraintsModal'
+import apiClient from '../lib/api'
 
 // Types
 interface Shift {
@@ -33,135 +33,58 @@ interface Assignment {
   status: string
 }
 
+interface Staff {
+  id: number
+  name: string
+  phone_number: string
+  email?: string
+  role: string
+  skills: string[]
+  reliability_score: number
+  is_active: boolean
+}
 
-
-// API functions using Supabase
+// API functions using FastAPI backend
 const api = {
   getShifts: async (businessId: number, startDate: string, endDate: string): Promise<Shift[]> => {
     try {
-      // Get shifts from Supabase with assignments
-      const { data: shiftsData, error: shiftsError } = await supabase
-        .from('shifts')
-        .select(`
-          *,
-          shift_assignments (
-            id,
-            staff_id,
-            status,
-            staff:staff_id (
-              name
-            )
-          )
-        `)
-        .eq('business_id', businessId)
-        .gte('date', startDate.split('T')[0])
-        .lte('date', endDate.split('T')[0])
-        .order('date', { ascending: true })
-        .order('start_time', { ascending: true })
-
-      if (shiftsError) throw shiftsError
-
-      // Transform the data to match our interface
-      const transformedShifts = (shiftsData || []).map(shift => ({
-        ...shift,
-        assignments: (shift.shift_assignments || []).map((assignment: any) => ({
-          id: assignment.id,
-          staff_id: assignment.staff_id,
-          staff_name: assignment.staff?.name || 'Unknown',
-          status: assignment.status
-        }))
-      }))
-
-      return transformedShifts
+      const shifts = await apiClient.getShifts(businessId, startDate.split('T')[0], endDate.split('T')[0]) as Shift[]
+      return shifts || []
     } catch (error) {
       console.error('Error fetching shifts:', error)
       return []
     }
   },
 
-  createShift: async (shiftData: any) => {
-    const { data, error } = await supabase
-      .from('shifts')
-      .insert({
-        business_id: shiftData.business_id,
-        title: shiftData.title,
-        date: shiftData.date.split('T')[0], // Ensure date format
-        start_time: shiftData.start_time,
-        end_time: shiftData.end_time,
-        required_skill: shiftData.required_skill,
-        required_staff_count: shiftData.required_staff_count,
-        hourly_rate: shiftData.hourly_rate,
-        notes: shiftData.notes,
-        status: 'scheduled'
-      })
-      .select()
-      .single()
-
-    if (error) throw error
-    return data
+  createShift: async (businessId: number, shiftData: any) => {
+    return await apiClient.createShift(businessId, {
+      title: shiftData.title,
+      date: shiftData.date.split('T')[0], // Ensure date format
+      start_time: shiftData.start_time,
+      end_time: shiftData.end_time,
+      required_skill: shiftData.required_skill,
+      required_staff_count: shiftData.required_staff_count,
+      hourly_rate: shiftData.hourly_rate,
+      notes: shiftData.notes
+    })
   },
 
-  assignStaff: async (assignmentData: any) => {
-    const { data, error } = await supabase
-      .from('shift_assignments')
-      .insert({
-        shift_id: assignmentData.shift_id,
-        staff_id: assignmentData.staff_id,
-        status: 'assigned'
-      })
-      .select()
-      .single()
-
-    if (error) throw error
-    return data
+  assignStaff: async (businessId: number, shiftId: number, staffId: number) => {
+    return await apiClient.assignStaff(businessId, shiftId, staffId)
   },
 
   reportSickLeave: async (sickLeaveData: any) => {
-    // Create sick leave record
-    const { data: sickLeave, error: sickError } = await supabase
-      .from('sick_leave_requests')
-      .insert({
-        staff_id: sickLeaveData.staff_id,
-        shift_id: sickLeaveData.shift_id,
-        business_id: sickLeaveData.business_id,
-        reason: sickLeaveData.reason,
-        message: sickLeaveData.message
-      })
-      .select()
-      .single()
-
-    if (sickError) throw sickError
-
-    // Update shift assignment status
-    const { error: updateError } = await supabase
-      .from('shift_assignments')
-      .update({ status: 'called_in_sick' })
-      .eq('shift_id', sickLeaveData.shift_id)
-      .eq('staff_id', sickLeaveData.staff_id)
-
-    if (updateError) throw updateError
-
-    // Update shift status to understaffed
-    const { error: shiftError } = await supabase
-      .from('shifts')
-      .update({ status: 'understaffed' })
-      .eq('id', sickLeaveData.shift_id)
-
-    if (shiftError) throw shiftError
-
-    return sickLeave
+    return await apiClient.reportSickLeave(sickLeaveData)
   },
 
   getStaff: async (businessId: number): Promise<Staff[]> => {
-    const { data, error } = await supabase
-      .from('staff')
-      .select('*')
-      .eq('business_id', businessId)
-      .eq('is_active', true)
-      .order('name')
-
-    if (error) throw error
-    return data || []
+    try {
+      const staff = await apiClient.getStaff(businessId) as Staff[]
+      return staff || []
+    } catch (error) {
+      console.error('Error fetching staff:', error)
+      return []
+    }
   }
 }
 
@@ -207,7 +130,7 @@ export default function ShiftsPage() {
 
   // Mutations
   const createShiftMutation = useMutation({
-    mutationFn: api.createShift,
+    mutationFn: (shiftData: any) => api.createShift(businessId, shiftData),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['shifts'] })
       setShowCreateShift(false)
@@ -219,7 +142,8 @@ export default function ShiftsPage() {
   })
 
   const assignStaffMutation = useMutation({
-    mutationFn: api.assignStaff,
+    mutationFn: ({ shiftId, staffId }: { shiftId: number; staffId: number }) => 
+      api.assignStaff(businessId, shiftId, staffId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['shifts'] })
       setShowAssignStaff(false)
@@ -640,8 +564,8 @@ export default function ShiftsPage() {
             onAssign={async (staffId) => {
               // Assign staff
               assignStaffMutation.mutate({ 
-                shift_id: selectedShift.id, 
-                staff_id: staffId 
+                shiftId: selectedShift.id, 
+                staffId: staffId 
               });
               
               // Send email notification
@@ -832,6 +756,35 @@ function CreateShiftModal({ onClose, onSubmit, isLoading }: any) {
         </form>
       </div>
     </div>
+
+        {/* Excel Import/Export Section */}
+        <div className="mt-8">
+          <ExcelImportExport 
+            onDataImported={() => {
+              queryClient.invalidateQueries({ queryKey: ['shifts'] });
+              queryClient.invalidateQueries({ queryKey: ['staff'] });
+            }}
+          />
+        </div>
+
+        {/* Auto-Schedule Modal */}
+        <AutoScheduleModal
+          isOpen={showAutoSchedule}
+          onClose={() => setShowAutoSchedule(false)}
+          onConfirm={handleAutoSchedule}
+          businessId={businessId}
+          staff={staff.map(s => ({ id: s.id, name: s.name }))}
+        />
+
+        {/* Business Constraints Modal */}
+        {showConstraintsModal && (
+          <BusinessConstraintsModal
+            businessId={businessId}
+            onClose={() => setShowConstraintsModal(false)}
+          />
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -1018,33 +971,6 @@ function AssignStaffModal({ shift, staff, onClose, onAssign, onReportSick, isLoa
               </div>
             </div>
           </div>
-        )}
-        
-        {/* Excel Import/Export Section */}
-        <div className="mt-8">
-          <ExcelImportExport 
-            onDataImported={() => {
-              queryClient.invalidateQueries({ queryKey: ['shifts'] });
-              queryClient.invalidateQueries({ queryKey: ['staff'] });
-            }}
-          />
-        </div>
-
-        {/* Auto-Schedule Modal */}
-        <AutoScheduleModal
-          isOpen={showAutoSchedule}
-          onClose={() => setShowAutoSchedule(false)}
-          onConfirm={handleAutoSchedule}
-          businessId={businessId}
-          staff={staff.map(s => ({ id: s.id, name: s.name }))}
-        />
-
-        {/* Business Constraints Modal */}
-        {showConstraintsModal && (
-          <BusinessConstraintsModal
-            businessId={businessId}
-            onClose={() => setShowConstraintsModal(false)}
-          />
         )}
       </div>
     </div>

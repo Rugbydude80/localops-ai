@@ -1,68 +1,87 @@
 #!/bin/bash
 
-# LocalOps AI Development Setup Script
+# LocalOps AI Development Server Startup Script
 echo "🚀 Starting LocalOps AI Development Environment..."
 
-# Check if Python backend dependencies are installed
-if [ ! -d "backend/venv" ]; then
-    echo "📦 Setting up Python virtual environment..."
-    cd backend
-    python3 -m venv venv
-    source venv/bin/activate
-    pip install -r requirements.txt
-    cd ..
-else
-    echo "✅ Python virtual environment already exists"
+# Function to cleanup background processes
+cleanup() {
+    echo "🛑 Shutting down development servers..."
+    pkill -f "python main.py"
+    pkill -f "next dev"
+    exit 0
+}
+
+# Set up signal handlers for graceful shutdown
+trap cleanup SIGINT SIGTERM
+
+# Check if required directories exist
+if [ ! -d "backend" ] || [ ! -d "frontend" ]; then
+    echo "❌ Error: backend or frontend directory not found!"
+    echo "Please run this script from the project root directory."
+    exit 1
 fi
 
-# Check if Node.js frontend dependencies are installed
-if [ ! -d "frontend/node_modules" ]; then
-    echo "📦 Installing Node.js dependencies..."
-    cd frontend
-    npm install
-    cd ..
-else
-    echo "✅ Node.js dependencies already installed"
-fi
-
-# Start the backend server in the background
-echo "🐍 Starting Python backend server..."
+# Start backend server
+echo "📡 Starting FastAPI backend server on port 8001..."
 cd backend
+
+# Check if virtual environment exists
+if [ ! -d "venv" ]; then
+    echo "🔧 Creating Python virtual environment..."
+    python3 -m venv venv
+fi
+
+# Activate virtual environment
 source venv/bin/activate
+
+# Install dependencies if needed
+if [ ! -f "venv/installed" ]; then
+    echo "📦 Installing Python dependencies..."
+    pip install -r requirements.txt
+    touch venv/installed
+fi
+
+# Start backend in background
 python main.py &
 BACKEND_PID=$!
-cd ..
 
 # Wait a moment for backend to start
 sleep 3
 
-# Start the frontend development server
-echo "⚛️  Starting Next.js frontend server..."
-cd frontend
+# Check if backend is running
+if ! curl -s http://localhost:8001/health > /dev/null; then
+    echo "❌ Backend failed to start. Check the logs above."
+    kill $BACKEND_PID 2>/dev/null
+    exit 1
+fi
+
+echo "✅ Backend server started successfully!"
+
+# Start frontend server
+echo "⚛️  Starting Next.js frontend server on port 3000..."
+cd ../frontend
+
+# Check if node_modules exists
+if [ ! -d "node_modules" ]; then
+    echo "📦 Installing Node.js dependencies..."
+    npm install
+fi
+
+# Start frontend in background
 npm run dev &
 FRONTEND_PID=$!
-cd ..
 
+# Wait a moment for frontend to start
+sleep 5
+
+echo "✅ Frontend server started successfully!"
 echo ""
 echo "🎉 LocalOps AI is now running!"
-echo ""
 echo "📱 Frontend: http://localhost:3000"
 echo "🔧 Backend API: http://localhost:8001"
 echo "📚 API Docs: http://localhost:8001/docs"
 echo ""
 echo "Press Ctrl+C to stop all servers"
 
-# Function to cleanup background processes
-cleanup() {
-    echo ""
-    echo "🛑 Stopping servers..."
-    kill $BACKEND_PID 2>/dev/null
-    kill $FRONTEND_PID 2>/dev/null
-    exit 0
-}
-
-# Set trap to cleanup on script exit
-trap cleanup SIGINT SIGTERM
-
-# Wait for user to stop
-wait
+# Wait for both processes
+wait $BACKEND_PID $FRONTEND_PID

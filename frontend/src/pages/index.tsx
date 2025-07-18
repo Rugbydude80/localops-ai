@@ -6,8 +6,8 @@ export default function Home() {
   const router = useRouter()
 
   useEffect(() => {
-    // Redirect to dashboard on page load
-    router.replace('/dashboard')
+    // Redirect to enhanced dashboard on page load
+    router.replace('/enhanced-dashboard')
   }, [router])
 
   return (
@@ -24,7 +24,7 @@ export default function Home() {
             <span className="text-white font-bold text-2xl">L</span>
           </div>
           <h1 className="text-2xl font-bold text-gray-900 mb-2">LocalOps AI</h1>
-          <p className="text-gray-500">Redirecting to dashboard...</p>
+          <p className="text-gray-500">Redirecting to enhanced dashboard...</p>
           <div className="mt-4">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
           </div>

@@ -94,54 +94,86 @@ A comprehensive restaurant operations management platform featuring 8 advanced A
 ### Prerequisites
 - Node.js 18+
 - Python 3.9+
-- Supabase account
-- OpenAI API key
+- OpenAI API key (for AI features)
+- WhatsApp Business API token (optional, for messaging)
 
 ### 1. Clone and Setup
 ```bash
 git clone <repository-url>
 cd localops-ai
-
-# Setup frontend
-cd frontend
-npm install
-cp .env.example .env.local
-# Edit .env.local with your Supabase credentials
 ```
 
-### 2. Database Setup
-```bash
-# Create database tables
-npm run setup-db
+### 2. Configure Environment Variables
 
-# Populate with demo data for all 8 features
-npm run setup-demo
-```
-
-### 3. Backend Setup
+#### Backend (.env)
 ```bash
-cd ../backend
-pip install -r requirements.txt
-cp .env.example .env
-# Edit .env with your API keys
-```
-
-### 4. Start Services
-```bash
-# Terminal 1: Backend
 cd backend
-python main.py
-
-# Terminal 2: Frontend
-cd frontend
-npm run dev
+cp .env.example .env
+# Edit .env with your API keys:
+OPENAI_API_KEY=your_openai_api_key
+WHATSAPP_ACCESS_TOKEN=your_whatsapp_business_token (optional)
+WHATSAPP_PHONE_NUMBER_ID=your_whatsapp_phone_id (optional)
 ```
 
-### 5. Access the Platform
-- **Enhanced Dashboard**: http://localhost:3000/enhanced-dashboard
-- **Original Dashboard**: http://localhost:3000
-- **API Documentation**: http://localhost:8000/docs
-- **Backend Health**: http://localhost:8000/health
+#### Frontend (.env.local)
+```bash
+cd ../frontend
+cp .env.example .env.local
+# Edit .env.local with your configuration
+```
+
+### 3. Start Development Environment
+```bash
+# From project root, run the development script
+./run-dev.sh
+```
+
+This will:
+- Set up Python virtual environment
+- Install backend dependencies
+- Start FastAPI backend on port 8001
+- Install frontend dependencies
+- Start Next.js frontend on port 3000
+
+### 4. Access the Platform
+- **Enhanced Dashboard**: http://localhost:3000 (redirects automatically)
+- **Staff Management**: http://localhost:3000/staff
+- **API Documentation**: http://localhost:8001/docs
+- **Backend Health**: http://localhost:8001/health
+
+### 5. Test AI Integration
+```bash
+# Run the integration test script
+./test-ai-integration.sh
+```
+
+This will verify that all AI features are working correctly.
+
+## ✅ What's Fixed
+
+### Core Functionality Restored
+- **Staff Creation**: Now properly connects to FastAPI backend with skill validation
+- **AI Integration**: All 8 AI modules now work with OpenAI API
+- **Skill-Based Alerts**: Emergency coverage requests filter staff by required skills
+- **WhatsApp Notifications**: AI-generated messages sent to qualified staff
+- **Enhanced Dashboard**: All 8 feature modules are now functional
+
+### Key Features Working
+1. **🧠 AI-Powered Predictive Scheduling**: Generate optimal schedules with AI
+2. **📱 Smart Staff Communication**: WhatsApp/SMS alerts with AI optimization
+3. **🎓 Digital Training & Certification**: AI-generated training content
+4. **📊 Real-Time Business Intelligence**: Live metrics and AI insights
+5. **🍽️ Intelligent Inventory Management**: AI-powered stock predictions
+6. **🏢 Multi-Location Coordination**: Cross-location staff and inventory management
+7. **⚡ Emergency Response Automation**: Skill-based emergency coverage with AI messages
+8. **⭐ Customer Experience Integration**: AI sentiment analysis and review management
+
+### Technical Improvements
+- **API Client**: Proper TypeScript API client connecting frontend to backend
+- **Error Handling**: Comprehensive error handling with user-friendly messages
+- **Real-time Updates**: Live data refresh every 30 seconds
+- **Skill Validation**: Staff can only be assigned to shifts matching their skills
+- **AI Fallbacks**: Graceful degradation when AI services are unavailable
 
 ## 🔧 Environment Configuration
 

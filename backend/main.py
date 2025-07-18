@@ -38,14 +38,15 @@ from services.inventory_intelligence import InventoryIntelligence
 from services.notification_service import NotificationService
 from services.collaboration_service import collaboration_manager
 from services.error_handler import error_handler, ErrorContext
+from services.app_notification_service import AppNotificationService
 from exceptions import (
     SchedulingException, AIServiceException, NotificationException,
     ConstraintViolationException, InsufficientStaffException, ExternalAPIException
 )
 from api_constraint_validation import router as constraint_router
 
-# Tables already exist in Supabase, so we don't need to create them
-# Base.metadata.create_all(bind=engine)
+# Create database tables if they don't exist (for local development)
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="LocalOps AI",
@@ -1132,7 +1133,7 @@ async def report_sick_leave(
     sick_leave: SickLeaveRequestCreate,
     db: Session = Depends(get_db)
 ):
-    """Report sick leave and trigger replacement search with WhatsApp notifications"""
+    """Report sick leave and trigger AI-powered replacement search with in-app notifications"""
     
     # Verify shift and staff exist
     shift = db.query(Shift).filter(Shift.id == sick_leave.shift_id).first()
@@ -1168,88 +1169,28 @@ async def report_sick_leave(
     db.commit()
     db.refresh(db_sick_leave)
     
-    # Find replacement staff with same skill
-    qualified_staff = db.query(Staff).filter(
-        Staff.business_id == sick_leave.business_id,
-        Staff.is_active == True,
-        Staff.skills.contains([shift.required_skill]),
-        Staff.id != sick_leave.staff_id  # Exclude the sick staff member
-    ).all()
+    # Use the new app notification service for AI-powered replacement finding
+    app_notification_service = AppNotificationService(db)
+    notification_result = await app_notification_service.handle_sick_leave_notification(
+        db_sick_leave, shift, staff
+    )
     
-    message_results = []
+    # Create emergency request for tracking
+    emergency_request = EmergencyRequest(
+        business_id=sick_leave.business_id,
+        shift_date=shift.date,
+        shift_start=shift.start_time,
+        shift_end=shift.end_time,
+        required_skill=shift.required_skill,
+        urgency="high",
+        message=f"URGENT: {staff.name} called in sick for {shift.title}. Need immediate replacement.",
+        status="pending"
+    )
+    db.add(emergency_request)
+    db.commit()
+    db.refresh(emergency_request)
     
-    if qualified_staff:
-        # Create emergency request for replacement
-        emergency_request = EmergencyRequest(
-            business_id=sick_leave.business_id,
-            shift_date=shift.date,
-            shift_start=shift.start_time,
-            shift_end=shift.end_time,
-            required_skill=shift.required_skill,
-            urgency="high",
-            message=f"URGENT: {staff.name} called in sick for {shift.title}. Need immediate replacement.",
-            status="pending"
-        )
-        db.add(emergency_request)
-        db.commit()
-        db.refresh(emergency_request)
-        
-        # Generate AI message for sick leave replacement
-        ai_message = await ai_service.generate_coverage_message(
-            business_name="Demo Restaurant",
-            shift_date=shift.date,
-            shift_start=shift.start_time,
-            shift_end=shift.end_time,
-            required_skill=shift.required_skill,
-            urgency="high",
-            custom_message=f"URGENT: {staff.name} called in sick. Need immediate replacement for {shift.title}."
-        )
-        
-        # Send WhatsApp messages to qualified staff
-        for qualified_staff_member in qualified_staff:
-            try:
-                result = await whatsapp_service.send_coverage_request(
-                    phone_number=qualified_staff_member.phone_number,
-                    staff_name=qualified_staff_member.name,
-                    message=ai_message,
-                    request_id=emergency_request.id
-                )
-                
-                # Log the message
-                message_log = MessageLog(
-                    business_id=sick_leave.business_id,
-                    staff_id=qualified_staff_member.id,
-                    request_id=emergency_request.id,
-                    message_type="sick_leave_replacement",
-                    platform="whatsapp",
-                    phone_number=qualified_staff_member.phone_number,
-                    message_content=f"URGENT: {staff.name} called in sick. Need replacement for {shift.title} on {shift.date.strftime('%Y-%m-%d')} {shift.start_time}-{shift.end_time}. Can you cover?",
-                    external_message_id=result.get("message_id"),
-                    status="sent" if result.get("success") else "failed"
-                )
-                db.add(message_log)
-                
-                message_results.append({
-                    "staff_id": qualified_staff_member.id,
-                    "staff_name": qualified_staff_member.name,
-                    "phone": qualified_staff_member.phone_number,
-                    "sent": result.get("success", False),
-                    "message_id": result.get("message_id")
-                })
-                
-            except Exception as e:
-                print(f"Failed to send message to {qualified_staff_member.name}: {e}")
-                message_results.append({
-                    "staff_id": qualified_staff_member.id,
-                    "staff_name": qualified_staff_member.name,
-                    "phone": qualified_staff_member.phone_number,
-                    "sent": False,
-                    "error": str(e)
-                })
-        
-        db.commit()
-    
-    # Return enhanced response with messaging details
+    # Return enhanced response with AI-powered notification details
     return {
         "id": db_sick_leave.id,
         "staff_id": db_sick_leave.staff_id,
@@ -1260,9 +1201,12 @@ async def report_sick_leave(
         "reported_at": db_sick_leave.reported_at,
         "replacement_found": db_sick_leave.replacement_found,
         "replacement_staff_id": db_sick_leave.replacement_staff_id,
-        "qualified_staff_count": len(qualified_staff),
-        "messages_sent": len([r for r in message_results if r.get("sent")]),
-        "message_results": message_results
+        "qualified_staff_count": notification_result["qualified_staff_found"],
+        "notifications_sent": notification_result["notifications_sent"],
+        "ai_message_generated": notification_result["ai_message_generated"],
+        "manager_notified": notification_result["manager_notified"],
+        "qualified_staff_details": notification_result["qualified_staff_details"],
+        "replacement_message": notification_result["replacement_message"]
     }
 
 @app.get("/api/schedule/{business_id}/calendar")
@@ -3285,6 +3229,50 @@ async def resolve_scheduling_conflicts(
             status_code=500,
             detail=f"Failed to resolve scheduling conflicts: {str(e)}"
         )
+
+# In-App Notification Endpoints
+@app.get("/api/notifications/{staff_id}")
+async def get_staff_notifications(
+    staff_id: int,
+    unread_only: bool = False,
+    limit: int = 20,
+    db: Session = Depends(get_db)
+):
+    """Get in-app notifications for a staff member"""
+    app_notification_service = AppNotificationService(db)
+    notifications = await app_notification_service.get_staff_notifications(
+        staff_id, unread_only, limit
+    )
+    return notifications
+
+@app.post("/api/notifications/{notification_id}/read")
+async def mark_notification_read(
+    notification_id: int,
+    staff_id: int,
+    db: Session = Depends(get_db)
+):
+    """Mark a notification as read"""
+    app_notification_service = AppNotificationService(db)
+    success = await app_notification_service.mark_notification_read(
+        notification_id, staff_id
+    )
+    return {"success": success, "notification_id": notification_id}
+
+@app.post("/api/notifications/{notification_id}/respond")
+async def respond_to_notification(
+    notification_id: int,
+    response_data: dict,
+    db: Session = Depends(get_db)
+):
+    """Respond to a replacement request notification"""
+    app_notification_service = AppNotificationService(db)
+    result = await app_notification_service.respond_to_replacement_request(
+        notification_id=notification_id,
+        staff_id=response_data["staff_id"],
+        response=response_data["response"],  # "accept", "decline", "maybe"
+        message=response_data.get("message")
+    )
+    return result
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8001)

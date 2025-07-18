@@ -17,58 +17,48 @@ import {
 import { useQuery } from '@tanstack/react-query'
 import toast, { Toaster } from 'react-hot-toast'
 
-// API functions for all 8 features
+import apiClient from '../lib/api'
+
+// API functions for all 8 features using the new API client
 const api = {
   // Feature 1: Predictive Scheduling
   getPredictiveSchedule: async (businessId: number, weekStart: string) => {
-    const response = await fetch(`/api/predictive-scheduling/${businessId}/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ week_start: weekStart })
-    })
-    return response.json()
+    return await apiClient.getPredictiveSchedule(businessId, weekStart)
   },
 
   // Feature 2: Smart Communication
   getCommunicationAnalytics: async (businessId: number) => {
-    const response = await fetch(`/api/smart-communication/${businessId}/analytics`)
-    return response.json()
+    return await apiClient.getCommunicationAnalytics(businessId)
   },
 
   // Feature 3: Training Manager
   getTrainingAnalytics: async (businessId: number) => {
-    const response = await fetch(`/api/training/${businessId}/analytics`)
-    return response.json()
+    return await apiClient.getTrainingAnalytics(businessId)
   },
 
   // Feature 4: Business Intelligence
   getRealTimeMetrics: async (businessId: number) => {
-    const response = await fetch(`/api/business-intelligence/${businessId}/real-time`)
-    return response.json()
+    return await apiClient.getRealTimeMetrics(businessId)
   },
 
   // Feature 5: Inventory Intelligence
   getInventoryDashboard: async (businessId: number) => {
-    const response = await fetch(`/api/inventory/${businessId}/dashboard`)
-    return response.json()
+    return await apiClient.getInventoryDashboard(businessId)
   },
 
   // Feature 6: Multi-Location
   getLocations: async (businessId: number) => {
-    const response = await fetch(`/api/multi-location/${businessId}/locations`)
-    return response.json()
+    return await apiClient.getLocations(businessId)
   },
 
   // Feature 7: Emergency Response
   getEmergencyIncidents: async (businessId: number) => {
-    const response = await fetch(`/api/emergency-response/${businessId}/incidents`)
-    return response.json()
+    return await apiClient.getEmergencyIncidents(businessId)
   },
 
   // Feature 8: Customer Experience
   getCustomerReviews: async (businessId: number) => {
-    const response = await fetch(`/api/customer-experience/${businessId}/reviews`)
-    return response.json()
+    return await apiClient.getCustomerReviews(businessId)
   }
 }
 
