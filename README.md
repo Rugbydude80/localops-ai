@@ -138,8 +138,8 @@ This will:
 ### 4. Access the Platform
 - **Enhanced Dashboard**: http://localhost:3000 (redirects automatically)
 - **Staff Management**: http://localhost:3000/staff
-- **API Documentation**: http://localhost:8001/docs
-- **Backend Health**: http://localhost:8001/health
+- **API Documentation**: http://localhost:8000/docs
+- **Backend Health**: http://localhost:8000/health
 
 ### 5. Test AI Integration
 ```bash

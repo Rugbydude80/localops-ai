@@ -8,7 +8,7 @@ This guide will help you set up a complete demo environment with sample data to 
 
 1. **Database Setup**: Ensure your Supabase database is configured
 2. **Environment Variables**: Make sure your `.env.local` file is properly configured
-3. **Backend Running**: The FastAPI backend should be running on `http://localhost:8001`
+3. **Backend Running**: The FastAPI backend should be running on `http://localhost:8000`
 
 ### 1. Install Dependencies
 
@@ -177,7 +177,7 @@ npm run setup-full-demo
 ```
 
 ### Backend Connection Issues
-- Ensure backend is running on `http://localhost:8001`
+- Ensure backend is running on `http://localhost:8000`
 - Check that all environment variables are set
 - Verify Supabase connection
 

@@ -84,6 +84,10 @@ class SmartCommunicationHub:
         if filters.get("roles"):
             query = query.filter(Staff.role.in_(filters["roles"]))
         
+        # Apply custom staff ID filters
+        if filters.get("custom_staff_ids"):
+            query = query.filter(Staff.id.in_(filters["custom_staff_ids"]))
+        
         staff_members = query.all()
         
         return [

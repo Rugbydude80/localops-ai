@@ -62,7 +62,7 @@ class Staff(Base):
     business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False)
     name = Column(String, nullable=False)
     phone_number = Column(String, nullable=False)
-    email = Column(String)
+    email = Column(String, unique=True, index=True)
     role = Column(String, nullable=False)  # manager, chef, server, bartender, etc.
     user_role = Column(String, ForeignKey("user_roles.role_name"), default="staff")  # superadmin, admin, manager, supervisor, staff
     skills = Column(JSON)  # ["kitchen", "bar", "front_of_house", "management"]
@@ -71,6 +71,9 @@ class Staff(Base):
     is_active = Column(Boolean, default=True)
     hired_date = Column(DateTime, default=datetime.now)
     last_shift_date = Column(DateTime)
+    
+    # Authentication fields
+    password_hash = Column(String)  # Hashed password for authentication
     
     # Permission flags
     can_assign_shifts = Column(Boolean, default=False)
@@ -583,3 +586,151 @@ class ScheduleNotification(Base):
     # Relationships
     draft = relationship("ScheduleDraft", back_populates="notifications")
     staff = relationship("Staff")
+
+# Enhanced AI Scheduling System Models
+
+class ShiftTemplate(Base):
+    """Standard daily shift templates for consistent scheduling"""
+    __tablename__ = "shift_templates"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)  # "Opening Shift", "Closing Shift", "Peak Hour"
+    description = Column(Text)
+    start_time = Column(String(5), nullable=False)  # "07:00"
+    end_time = Column(String(5), nullable=False)    # "15:00"
+    break_start = Column(String(5))  # "12:00"
+    break_duration = Column(Integer)  # minutes
+    required_skills = Column(JSON)  # ["kitchen", "management"]
+    min_staff_count = Column(Integer, default=1)
+    max_staff_count = Column(Integer)
+    hourly_rate = Column(Float)
+    is_active = Column(Boolean, default=True, index=True)
+    created_at = Column(DateTime, default=datetime.now)
+    
+    # Relationships
+    business = relationship("Business")
+
+class EmployeeAvailability(Base):
+    """Employee availability preferences and constraints"""
+    __tablename__ = "employee_availability"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    staff_id = Column(Integer, ForeignKey("staff.id"), nullable=False, index=True)
+    day_of_week = Column(Integer, nullable=False)  # 0=Monday, 6=Sunday
+    availability_type = Column(String(20), nullable=False)  # "available", "if_needed", "unavailable"
+    start_time = Column(String(5))  # "09:00"
+    end_time = Column(String(5))    # "17:00"
+    priority = Column(String(20), default="medium")  # "low", "medium", "high"
+    notes = Column(Text)
+    is_active = Column(Boolean, default=True, index=True)
+    created_at = Column(DateTime, default=datetime.now)
+    
+    # Relationships
+    staff = relationship("Staff")
+
+class WeeklyHourAllocation(Base):
+    """Employee weekly hour targets and tracking"""
+    __tablename__ = "weekly_hour_allocations"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    staff_id = Column(Integer, ForeignKey("staff.id"), nullable=False, index=True)
+    week_start = Column(Date, nullable=False, index=True)
+    target_hours = Column(Float, nullable=False)  # Target hours for the week
+    allocated_hours = Column(Float, default=0)    # Hours actually scheduled
+    actual_hours = Column(Float)                  # Hours actually worked
+    overtime_hours = Column(Float, default=0)     # Hours over target
+    status = Column(String(20), default="pending")  # "pending", "scheduled", "completed"
+    notes = Column(Text)
+    created_at = Column(DateTime, default=datetime.now)
+    
+    # Relationships
+    staff = relationship("Staff")
+
+class ScheduleOverride(Base):
+    """Manual overrides to AI-generated schedules"""
+    __tablename__ = "schedule_overrides"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    draft_id = Column(String, ForeignKey("schedule_drafts.id"), nullable=False, index=True)
+    shift_id = Column(Integer, ForeignKey("shifts.id"), nullable=False, index=True)
+    staff_id = Column(Integer, ForeignKey("staff.id"), nullable=False, index=True)
+    override_type = Column(String(20), nullable=False)  # "assignment", "unassignment", "time_change"
+    original_assignment_id = Column(Integer, ForeignKey("draft_shift_assignments.id"))
+    reason = Column(Text)
+    overridden_by = Column(Integer, ForeignKey("staff.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.now)
+    
+    # Relationships
+    draft = relationship("ScheduleDraft")
+    shift = relationship("Shift")
+    staff = relationship("Staff", foreign_keys=[staff_id])
+    overrider = relationship("Staff", foreign_keys=[overridden_by])
+    original_assignment = relationship("DraftShiftAssignment")
+
+class ShiftSwapRequest(Base):
+    """Employee shift swap requests"""
+    __tablename__ = "shift_swap_requests"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
+    requester_id = Column(Integer, ForeignKey("staff.id"), nullable=False, index=True)
+    target_staff_id = Column(Integer, ForeignKey("staff.id"), nullable=False, index=True)
+    requester_shift_id = Column(Integer, ForeignKey("shifts.id"), nullable=False, index=True)
+    target_shift_id = Column(Integer, ForeignKey("shifts.id"), nullable=False, index=True)
+    reason = Column(Text)
+    status = Column(String(20), default="pending")  # "pending", "approved", "rejected", "expired"
+    approved_by = Column(Integer, ForeignKey("staff.id"))
+    approved_at = Column(DateTime)
+    expires_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.now)
+    
+    # Relationships
+    business = relationship("Business")
+    requester = relationship("Staff", foreign_keys=[requester_id])
+    target_staff = relationship("Staff", foreign_keys=[target_staff_id])
+    requester_shift = relationship("Shift", foreign_keys=[requester_shift_id])
+    target_shift = relationship("Shift", foreign_keys=[target_shift_id])
+    approver = relationship("Staff", foreign_keys=[approved_by])
+
+class OpenShift(Base):
+    """Available shifts for employee pickup"""
+    __tablename__ = "open_shifts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
+    shift_id = Column(Integer, ForeignKey("shifts.id"), nullable=False, index=True)
+    required_skills = Column(JSON)  # Skills required for the shift
+    hourly_rate = Column(Float)
+    pickup_deadline = Column(DateTime)
+    status = Column(String(20), default="open")  # "open", "claimed", "expired", "cancelled"
+    claimed_by = Column(Integer, ForeignKey("staff.id"))
+    claimed_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.now)
+    
+    # Relationships
+    business = relationship("Business")
+    shift = relationship("Shift")
+    claimant = relationship("Staff")
+
+class ScheduleAnalytics(Base):
+    """Schedule performance analytics and metrics"""
+    __tablename__ = "schedule_analytics"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
+    week_start = Column(Date, nullable=False, index=True)
+    total_scheduled_hours = Column(Float, default=0)
+    total_labor_cost = Column(Float, default=0)
+    coverage_rate = Column(Float, default=0)  # Percentage of shifts fully staffed
+    overtime_hours = Column(Float, default=0)
+    understaffed_shifts = Column(Integer, default=0)
+    employee_satisfaction_score = Column(Float)  # 1-10 scale
+    ai_confidence_average = Column(Float, default=0)
+    manual_overrides_count = Column(Integer, default=0)
+    shift_swap_requests = Column(Integer, default=0)
+    open_shift_pickups = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.now)
+    
+    # Relationships
+    business = relationship("Business")

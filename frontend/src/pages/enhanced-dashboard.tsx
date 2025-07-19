@@ -16,6 +16,9 @@ import {
 } from '@heroicons/react/24/outline'
 import { useQuery } from '@tanstack/react-query'
 import toast, { Toaster } from 'react-hot-toast'
+import ProtectedRoute from '../components/ProtectedRoute'
+import { useAuth } from '../hooks/useAuth'
+import SmartMessageModal from '../components/SmartMessageModal'
 
 import apiClient from '../lib/api'
 
@@ -51,6 +54,10 @@ const api = {
     return await apiClient.getLocations(businessId)
   },
 
+  getTransfers: async (businessId: number) => {
+    return await apiClient.getTransfers(businessId)
+  },
+
   // Feature 7: Emergency Response
   getEmergencyIncidents: async (businessId: number) => {
     return await apiClient.getEmergencyIncidents(businessId)
@@ -63,7 +70,8 @@ const api = {
 }
 
 export default function EnhancedDashboard() {
-  const [businessId] = useState(1)
+  const { user } = useAuth()
+  const [businessId] = useState(user?.business_id || 1)
   const [activeFeature, setActiveFeature] = useState('overview')
 
   // Queries for all features
@@ -176,6 +184,24 @@ export default function EnhancedDashboard() {
                 </div>
               </div>
               <div className="flex items-center space-x-4">
+                <a
+                  href="/simple-staff"
+                  className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  <svg className="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z" />
+                  </svg>
+                  Staff Management
+                </a>
+                <a
+                  href="/enhanced-shifts"
+                  className="inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+                >
+                  <svg className="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  Enhanced Shifts
+                </a>
                 <div className="text-right">
                   <div className="text-sm font-medium text-gray-900">Professional Plan</div>
                   <div className="text-xs text-gray-500">All features unlocked</div>
@@ -435,33 +461,48 @@ function PredictiveSchedulingDashboard({ businessId }: any) {
 }
 
 function SmartCommunicationDashboard({ businessId, analytics }: any) {
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const { user } = useAuth();
+
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
-      <div className="text-center">
-        <ChatBubbleLeftRightIcon className="h-16 w-16 text-green-500 mx-auto mb-4" />
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">Smart Staff Communication Hub</h2>
-        <p className="text-gray-600 mb-6">Intelligent messaging with AI optimization</p>
-        <div className="grid grid-cols-3 gap-4 mb-6">
-          <div className="text-center">
-            <div className="text-2xl font-bold text-gray-900">{analytics?.total_messages || 0}</div>
-            <div className="text-sm text-gray-500">Messages Sent</div>
-          </div>
-          <div className="text-center">
-            <div className="text-2xl font-bold text-gray-900">{analytics?.total_deliveries || 0}</div>
-            <div className="text-sm text-gray-500">Deliveries</div>
-          </div>
-          <div className="text-center">
-            <div className="text-2xl font-bold text-gray-900">
-              {analytics?.success_rates?.whatsapp?.delivery_rate?.toFixed(1) || 0}%
+    <>
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
+        <div className="text-center">
+          <ChatBubbleLeftRightIcon className="h-16 w-16 text-green-500 mx-auto mb-4" />
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">Smart Staff Communication Hub</h2>
+          <p className="text-gray-600 mb-6">Intelligent messaging with AI optimization</p>
+          <div className="grid grid-cols-3 gap-4 mb-6">
+            <div className="text-center">
+              <div className="text-2xl font-bold text-gray-900">{analytics?.total_messages || 0}</div>
+              <div className="text-sm text-gray-500">Messages Sent</div>
             </div>
-            <div className="text-sm text-gray-500">Success Rate</div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-gray-900">{analytics?.total_deliveries || 0}</div>
+              <div className="text-sm text-gray-500">Deliveries</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-gray-900">
+                {analytics?.success_rates?.whatsapp?.delivery_rate?.toFixed(1) || 0}%
+              </div>
+              <div className="text-sm text-gray-500">Success Rate</div>
+            </div>
           </div>
+          <button 
+            onClick={() => setIsModalOpen(true)}
+            className="bg-green-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-green-700 transition-colors"
+          >
+            Send Smart Message
+          </button>
         </div>
-        <button className="bg-green-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-green-700">
-          Send Smart Message
-        </button>
       </div>
-    </div>
+
+      <SmartMessageModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        businessId={businessId}
+        senderId={user?.id || 1}
+      />
+    </>
   )
 }
 
@@ -528,15 +569,170 @@ function InventoryDashboard({ businessId, dashboard }: any) {
 }
 
 function MultiLocationDashboard({ businessId }: any) {
+  const { data: locations, isLoading, error } = useQuery({
+    queryKey: ['locations', businessId],
+    queryFn: () => api.getLocations(businessId),
+    enabled: !!businessId
+  })
+
+  const { data: transfers } = useQuery({
+    queryKey: ['transfers', businessId],
+    queryFn: () => api.getTransfers(businessId),
+    enabled: !!businessId
+  })
+
+  // Type assertions for the data
+  const locationsData = locations as any[] || []
+  const transfersData = transfers as any[] || []
+
+  if (isLoading) {
+    return (
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-500 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading locations...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
+        <div className="text-center">
+          <ExclamationTriangleIcon className="h-16 w-16 text-red-500 mx-auto mb-4" />
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">Error Loading Locations</h2>
+          <p className="text-gray-600 mb-6">Unable to load location data. Please try again.</p>
+          <button 
+            onClick={() => window.location.reload()}
+            className="bg-red-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-red-700"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
-      <div className="text-center">
-        <BuildingOffice2Icon className="h-16 w-16 text-teal-500 mx-auto mb-4" />
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">Multi-Location Coordination</h2>
-        <p className="text-gray-600 mb-6">Manage multiple restaurant locations efficiently</p>
-        <button className="bg-teal-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-teal-700">
-          View All Locations
-        </button>
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">Multi-Location Coordination</h2>
+            <p className="text-gray-600">Manage multiple restaurant locations efficiently</p>
+          </div>
+          <BuildingOffice2Icon className="h-12 w-12 text-teal-500" />
+        </div>
+        
+        <div className="grid grid-cols-3 gap-4">
+          <div className="text-center">
+            <div className="text-2xl font-bold text-gray-900">{locationsData.length}</div>
+            <div className="text-sm text-gray-500">Total Locations</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold text-gray-900">{transfersData.length}</div>
+            <div className="text-sm text-gray-500">Active Transfers</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold text-gray-900">
+              {locationsData.filter((loc: any) => loc.is_active).length}
+            </div>
+            <div className="text-sm text-gray-500">Active Locations</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Locations List */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Your Locations</h3>
+        
+        {locationsData.length > 0 ? (
+          <div className="space-y-4">
+            {locationsData.map((location: any) => (
+              <div key={location.id} className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="font-medium text-gray-900">{location.name}</h4>
+                    <p className="text-sm text-gray-600">{location.address}</p>
+                    {location.phone && (
+                      <p className="text-sm text-gray-500">{location.phone}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                      location.is_active 
+                        ? 'bg-green-100 text-green-800' 
+                        : 'bg-red-100 text-red-800'
+                    }`}>
+                      {location.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                    <button className="text-teal-600 hover:text-teal-700 text-sm font-medium">
+                      View Details
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-center py-8">
+            <BuildingOffice2Icon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+            <p className="text-gray-600 mb-4">No locations found</p>
+            <button className="bg-teal-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-teal-700">
+              Add First Location
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Staff Transfers */}
+      {transfersData.length > 0 && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Recent Staff Transfers</h3>
+          <div className="space-y-3">
+            {transfersData.slice(0, 3).map((transfer: any) => (
+              <div key={transfer.id} className="border border-gray-200 rounded-lg p-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">
+                      Staff Transfer - {transfer.transfer_type}
+                    </p>
+                    <p className="text-xs text-gray-600">{transfer.reason}</p>
+                    <p className="text-xs text-gray-500">
+                      {new Date(transfer.transfer_date).toLocaleDateString()}
+                    </p>
+                  </div>
+                  <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                    transfer.status === 'approved' 
+                      ? 'bg-green-100 text-green-800'
+                      : transfer.status === 'pending'
+                      ? 'bg-yellow-100 text-yellow-800'
+                      : 'bg-gray-100 text-gray-800'
+                  }`}>
+                    {transfer.status}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Action Buttons */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <div className="flex space-x-4">
+          <button className="flex-1 bg-teal-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-teal-700 transition-colors">
+            Add New Location
+          </button>
+          <button className="flex-1 bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors">
+            Request Staff Transfer
+          </button>
+          <button className="flex-1 bg-purple-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-purple-700 transition-colors">
+            View Analytics
+          </button>
+        </div>
       </div>
     </div>
   )

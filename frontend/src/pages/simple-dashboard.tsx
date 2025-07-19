@@ -115,7 +115,7 @@ export default function SimpleDashboard() {
                 <div className="mt-2 text-sm text-green-700">
                   <p>
                     Frontend: Running on port 3000<br />
-                    Backend: Running on port 8001<br />
+                    Backend: Running on port 8000<br />
                     Database: SQLite (Local Development)
                   </p>
                 </div>

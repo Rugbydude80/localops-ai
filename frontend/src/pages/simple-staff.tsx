@@ -1,6 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import Head from 'next/head'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast, { Toaster } from 'react-hot-toast'
 import { 
   UserGroupIcon, 
@@ -12,8 +11,6 @@ import {
   EnvelopeIcon,
   BellIcon
 } from '@heroicons/react/24/outline'
-import apiClient from '../lib/api'
-import NotificationPanel from '../components/NotificationPanel'
 
 // Types
 interface Staff {
@@ -34,7 +31,6 @@ interface CreateStaffData {
   email: string
   role: string
   skills: string[]
-  availability?: Record<string, string[]>
 }
 
 // Predefined skills for restaurant operations
@@ -72,15 +68,49 @@ const ROLES = [
   'delivery_driver'
 ]
 
-export default function StaffPage() {
-  const [businessId] = useState(1)
-  const [currentStaffId] = useState(1) // This would come from auth context
+// Mock data - this would normally come from the API
+const MOCK_STAFF: Staff[] = [
+  {
+    id: 1,
+    name: "John Smith",
+    phone_number: "+1234567890",
+    email: "john@restaurant.com",
+    role: "server",
+    skills: ["front_of_house", "customer_service"],
+    reliability_score: 8.5,
+    is_active: true,
+    hired_date: "2024-01-15"
+  },
+  {
+    id: 2,
+    name: "Sarah Johnson",
+    phone_number: "+1234567891",
+    email: "sarah@restaurant.com",
+    role: "head_chef",
+    skills: ["kitchen", "food_prep", "management"],
+    reliability_score: 9.2,
+    is_active: true,
+    hired_date: "2023-06-10"
+  },
+  {
+    id: 3,
+    name: "Mike Davis",
+    phone_number: "+1234567892",
+    email: "mike@restaurant.com",
+    role: "bartender",
+    skills: ["bar", "customer_service"],
+    reliability_score: 7.8,
+    is_active: true,
+    hired_date: "2024-03-20"
+  }
+]
+
+export default function SimpleStaffPage() {
+  const [staff, setStaff] = useState<Staff[]>(MOCK_STAFF)
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [showEditForm, setShowEditForm] = useState(false)
   const [editingStaff, setEditingStaff] = useState<Staff | null>(null)
   const [showEmergencyForm, setShowEmergencyForm] = useState(false)
-  const [showNotifications, setShowNotifications] = useState(false)
-  const queryClient = useQueryClient()
 
   // Form state
   const [formData, setFormData] = useState<CreateStaffData>({
@@ -99,84 +129,6 @@ export default function StaffPage() {
     shift_end: '',
     urgency: 'normal',
     message: ''
-  })
-
-  // Queries
-  const { data: staff = [] as Staff[], isLoading, error } = useQuery({
-    queryKey: ['staff', businessId],
-    queryFn: () => apiClient.getStaff(businessId),
-    refetchInterval: 30000 // Refresh every 30 seconds
-  })
-
-  // Mutations
-  const createStaffMutation = useMutation({
-    mutationFn: (staffData: CreateStaffData) => apiClient.createStaff({
-      business_id: businessId,
-      ...staffData
-    }),
-    onSuccess: (newStaff: any) => {
-      queryClient.invalidateQueries({ queryKey: ['staff'] })
-      setShowCreateForm(false)
-      setFormData({
-        name: '',
-        phone_number: '',
-        email: '',
-        role: '',
-        skills: []
-      })
-      toast.success(`Staff member ${newStaff.name} created successfully!`)
-    },
-    onError: (error: any) => {
-      toast.error(error.message || 'Failed to create staff member')
-    }
-  })
-
-  const updateStaffMutation = useMutation({
-    mutationFn: ({ staffId, updates }: { staffId: number; updates: any }) => 
-      apiClient.updateStaff(staffId, updates),
-    onSuccess: (updatedStaff: any) => {
-      queryClient.invalidateQueries({ queryKey: ['staff'] })
-      setShowEditForm(false)
-      setEditingStaff(null)
-      toast.success(`Staff member ${updatedStaff.name} updated successfully!`)
-    },
-    onError: (error: any) => {
-      toast.error(error.message || 'Failed to update staff member')
-    }
-  })
-
-  const deleteStaffMutation = useMutation({
-    mutationFn: (staffId: number) => apiClient.deleteStaff(staffId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['staff'] })
-      toast.success('Staff member deactivated successfully!')
-    },
-    onError: (error: any) => {
-      toast.error(error.message || 'Failed to deactivate staff member')
-    }
-  })
-
-  const emergencyRequestMutation = useMutation({
-    mutationFn: (requestData: any) => apiClient.createEmergencyRequest({
-      business_id: businessId,
-      business_name: 'Demo Restaurant',
-      ...requestData
-    }),
-    onSuccess: (response: any) => {
-      setShowEmergencyForm(false)
-      setEmergencyData({
-        required_skill: '',
-        shift_date: '',
-        shift_start: '',
-        shift_end: '',
-        urgency: 'normal',
-        message: ''
-      })
-      toast.success(`Emergency request sent to ${response.qualified_staff_count} staff members with ${response.required_skill} skills!`)
-    },
-    onError: (error: any) => {
-      toast.error(error.message || 'Failed to send emergency request')
-    }
   })
 
   const handleSkillToggle = (skill: string) => {
@@ -201,34 +153,28 @@ export default function StaffPage() {
       return
     }
 
-    createStaffMutation.mutate(formData)
-  }
-
-  const handleEmergencySubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    
-    if (!emergencyData.required_skill || !emergencyData.shift_date || !emergencyData.shift_start || !emergencyData.shift_end) {
-      toast.error('Please fill in all required fields')
-      return
+    const newStaff: Staff = {
+      id: Math.max(...staff.map(s => s.id)) + 1,
+      name: formData.name,
+      phone_number: formData.phone_number,
+      email: formData.email,
+      role: formData.role,
+      skills: formData.skills,
+      reliability_score: 5.0,
+      is_active: true,
+      hired_date: new Date().toISOString().split('T')[0]
     }
 
-    emergencyRequestMutation.mutate(emergencyData)
-  }
-
-  const getStaffBySkill = (skill: string) => {
-    return staff.filter(s => s.skills.includes(skill))
-  }
-
-  const getSkillColor = (skill: string) => {
-    const colors = {
-      kitchen: 'bg-red-100 text-red-800',
-      front_of_house: 'bg-blue-100 text-blue-800',
-      bar: 'bg-purple-100 text-purple-800',
-      management: 'bg-green-100 text-green-800',
-      food_prep: 'bg-orange-100 text-orange-800',
-      customer_service: 'bg-indigo-100 text-indigo-800'
-    }
-    return colors[skill as keyof typeof colors] || 'bg-gray-100 text-gray-800'
+    setStaff(prev => [...prev, newStaff])
+    setShowCreateForm(false)
+    setFormData({
+      name: '',
+      phone_number: '',
+      email: '',
+      role: '',
+      skills: []
+    })
+    toast.success(`Staff member ${newStaff.name} created successfully!`)
   }
 
   const handleEditStaff = (member: Staff) => {
@@ -241,12 +187,6 @@ export default function StaffPage() {
       skills: member.skills
     })
     setShowEditForm(true)
-  }
-
-  const handleDeleteStaff = (staffId: number, staffName: string) => {
-    if (confirm(`Are you sure you want to deactivate ${staffName}?`)) {
-      deleteStaffMutation.mutate(staffId)
-    }
   }
 
   const handleEditSubmit = (e: React.FormEvent) => {
@@ -264,31 +204,71 @@ export default function StaffPage() {
       return
     }
 
-    updateStaffMutation.mutate({
-      staffId: editingStaff.id,
-      updates: formData
-    })
+    const updatedStaff: Staff = {
+      ...editingStaff,
+      name: formData.name,
+      phone_number: formData.phone_number,
+      email: formData.email,
+      role: formData.role,
+      skills: formData.skills
+    }
+
+    setStaff(prev => prev.map(s => s.id === editingStaff.id ? updatedStaff : s))
+    setShowEditForm(false)
+    setEditingStaff(null)
+    toast.success(`Staff member ${updatedStaff.name} updated successfully!`)
   }
 
-  if (error) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="text-center">
-          <ExclamationTriangleIcon className="h-12 w-12 text-red-500 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">Connection Error</h2>
-          <p className="text-gray-600 mb-4">
-            Cannot connect to the backend API. Please make sure the backend is running on port 8000.
-          </p>
-          <button 
-            onClick={() => window.location.reload()}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-          >
-            Retry
-          </button>
-        </div>
-      </div>
-    )
+  const handleDeleteStaff = (staffId: number, staffName: string) => {
+    if (confirm(`Are you sure you want to deactivate ${staffName}?`)) {
+      setStaff(prev => prev.map(s => 
+        s.id === staffId ? { ...s, is_active: false } : s
+      ))
+      toast.success('Staff member deactivated successfully!')
+    }
   }
+
+  const handleEmergencySubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    if (!emergencyData.required_skill || !emergencyData.shift_date || !emergencyData.shift_start || !emergencyData.shift_end) {
+      toast.error('Please fill in all required fields')
+      return
+    }
+
+    const qualifiedStaff = staff.filter(s => 
+      s.is_active && s.skills.includes(emergencyData.required_skill)
+    )
+
+    setShowEmergencyForm(false)
+    setEmergencyData({
+      required_skill: '',
+      shift_date: '',
+      shift_start: '',
+      shift_end: '',
+      urgency: 'normal',
+      message: ''
+    })
+    toast.success(`Emergency request sent to ${qualifiedStaff.length} staff members with ${emergencyData.required_skill} skills!`)
+  }
+
+  const getStaffBySkill = (skill: string) => {
+    return staff.filter(s => s.is_active && s.skills.includes(skill))
+  }
+
+  const getSkillColor = (skill: string) => {
+    const colors = {
+      kitchen: 'bg-red-100 text-red-800',
+      front_of_house: 'bg-blue-100 text-blue-800',
+      bar: 'bg-purple-100 text-purple-800',
+      management: 'bg-green-100 text-green-800',
+      food_prep: 'bg-orange-100 text-orange-800',
+      customer_service: 'bg-indigo-100 text-indigo-800'
+    }
+    return colors[skill as keyof typeof colors] || 'bg-gray-100 text-gray-800'
+  }
+
+  const activeStaff = staff.filter(s => s.is_active)
 
   return (
     <>
@@ -314,13 +294,6 @@ export default function StaffPage() {
                 </div>
               </div>
               <div className="flex items-center space-x-4">
-                <button
-                  onClick={() => setShowNotifications(true)}
-                  className="inline-flex items-center px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
-                >
-                  <BellIcon className="h-5 w-5 mr-2" />
-                  Notifications
-                </button>
                 <button
                   onClick={() => setShowEmergencyForm(true)}
                   className="inline-flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
@@ -349,7 +322,7 @@ export default function StaffPage() {
                 <UserGroupIcon className="h-8 w-8 text-blue-600" />
                 <div className="ml-3">
                   <p className="text-sm font-medium text-gray-600">Total Staff</p>
-                  <p className="text-2xl font-bold text-gray-900">{staff.length}</p>
+                  <p className="text-2xl font-bold text-gray-900">{activeStaff.length}</p>
                 </div>
               </div>
             </div>
@@ -397,19 +370,14 @@ export default function StaffPage() {
               <h2 className="text-lg font-semibold text-gray-900">Staff Members</h2>
             </div>
             
-            {isLoading ? (
-              <div className="p-8 text-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-                <p className="mt-4 text-gray-600">Loading staff...</p>
-              </div>
-            ) : staff.length === 0 ? (
+            {activeStaff.length === 0 ? (
               <div className="p-8 text-center">
                 <UserGroupIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                <p className="text-gray-600">No staff members found. Add your first staff member to get started!</p>
+                <p className="text-gray-600">No active staff members found. Add your first staff member to get started!</p>
               </div>
             ) : (
               <div className="divide-y divide-gray-200">
-                {staff.map((member) => (
+                {activeStaff.map((member) => (
                   <div key={member.id} className="p-6 hover:bg-gray-50">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-4">
@@ -587,10 +555,9 @@ export default function StaffPage() {
                   </button>
                   <button
                     type="submit"
-                    disabled={createStaffMutation.isPending}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                   >
-                    {createStaffMutation.isPending ? 'Creating...' : 'Create Staff Member'}
+                    Create Staff Member
                   </button>
                 </div>
               </form>
@@ -710,10 +677,9 @@ export default function StaffPage() {
                   </button>
                   <button
                     type="submit"
-                    disabled={updateStaffMutation.isPending}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                   >
-                    {updateStaffMutation.isPending ? 'Updating...' : 'Update Staff Member'}
+                    Update Staff Member
                   </button>
                 </div>
               </form>
@@ -838,23 +804,15 @@ export default function StaffPage() {
                   </button>
                   <button
                     type="submit"
-                    disabled={emergencyRequestMutation.isPending}
-                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
                   >
-                    {emergencyRequestMutation.isPending ? 'Sending...' : 'Send Emergency Request'}
+                    Send Emergency Request
                   </button>
                 </div>
               </form>
             </div>
           </div>
         )}
-
-        {/* Notification Panel */}
-        <NotificationPanel
-          staffId={currentStaffId}
-          isOpen={showNotifications}
-          onClose={() => setShowNotifications(false)}
-        />
       </div>
     </>
   )

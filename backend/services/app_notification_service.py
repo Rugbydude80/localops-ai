@@ -6,6 +6,7 @@ from typing import List, Dict, Optional, Any
 from sqlalchemy.orm import Session
 from models import Staff, Shift, ShiftAssignment, SickLeaveRequest, EmergencyRequest, MessageLog
 from services.ai import AIService
+from services.smart_communication import EmailService
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,7 @@ class AppNotificationService:
     def __init__(self, db: Session):
         self.db = db
         self.ai_service = AIService()
+        self.email_service = EmailService()
     
     async def handle_sick_leave_notification(
         self,
@@ -39,9 +41,12 @@ class AppNotificationService:
             sick_staff, shift, sick_leave_request.reason, sick_leave_request.message
         )
         
-        # Create in-app notifications for qualified staff
+        # Create in-app notifications and send emails for qualified staff
         notifications_created = []
+        email_notifications_sent = []
+        
         for staff_member in qualified_staff:
+            # Create in-app notification
             notification = await self._create_staff_notification(
                 staff_member,
                 shift,
@@ -50,6 +55,17 @@ class AppNotificationService:
                 priority="high"
             )
             notifications_created.append(notification)
+            
+            # Send email notification to available staff with matching skills
+            if staff_member.email:
+                email_result = await self._send_sick_leave_email(
+                    staff_member,
+                    shift,
+                    sick_staff,
+                    ai_message,
+                    sick_leave_request.reason
+                )
+                email_notifications_sent.append(email_result)
         
         # Create summary notification for managers
         manager_notification = await self._create_manager_notification(
@@ -64,6 +80,7 @@ class AppNotificationService:
             "sick_leave_id": sick_leave_request.id,
             "qualified_staff_found": len(qualified_staff),
             "notifications_sent": len(notifications_created),
+            "emails_sent": len([e for e in email_notifications_sent if e.get("success")]),
             "manager_notified": bool(manager_notification),
             "ai_message_generated": bool(ai_message),
             "qualified_staff_details": [
@@ -72,11 +89,13 @@ class AppNotificationService:
                     "name": staff.name,
                     "skills": staff.skills,
                     "reliability_score": staff.reliability_score,
-                    "phone_number": staff.phone_number
+                    "phone_number": staff.phone_number,
+                    "email": staff.email
                 }
                 for staff in qualified_staff
             ],
-            "replacement_message": ai_message
+            "replacement_message": ai_message,
+            "email_notifications": email_notifications_sent
         }
     
     async def _find_qualified_replacement_staff(
@@ -435,4 +454,103 @@ class AppNotificationService:
             
             self.db.add(message_log)
         
-        self.db.commit() 
+        self.db.commit()
+    
+    async def _send_sick_leave_email(
+        self,
+        staff_member: Staff,
+        shift: Shift,
+        sick_staff: Staff,
+        message_content: str,
+        reason: str
+    ) -> Dict[str, Any]:
+        """
+        Send email notification to staff member about sick leave replacement opportunity
+        """
+        try:
+            # Create email subject
+            subject = f"URGENT: {shift.required_skill.title()} Shift Coverage Needed - {shift.date.strftime('%A, %B %d')}"
+            
+            # Create detailed email content
+            email_content = f"""
+Dear {staff_member.name},
+
+{message_content}
+
+SHIFT DETAILS:
+- Position: {shift.required_skill.title()}
+- Date: {shift.date.strftime('%A, %B %d, %Y')}
+- Time: {shift.start_time} - {shift.end_time}
+- Location: Restaurant
+
+SICK LEAVE DETAILS:
+- Staff Member: {sick_staff.name}
+- Reason: {reason}
+
+YOUR QUALIFICATIONS:
+- Skills: {', '.join(staff_member.skills) if staff_member.skills else 'General'}
+- Reliability Score: {staff_member.reliability_score}/10
+
+RESPONSE OPTIONS:
+1. Accept the shift (reply with "YES")
+2. Decline the shift (reply with "NO")
+3. Need more information (reply with "MAYBE")
+
+Please respond as soon as possible. This is an urgent request.
+
+Best regards,
+Restaurant Management
+            """.strip()
+            
+            # Send email
+            email_result = await self.email_service.send_email(
+                to_email=staff_member.email,
+                subject=subject,
+                content=email_content,
+                staff_name=staff_member.name
+            )
+            
+            # Log the email notification
+            message_log = MessageLog(
+                business_id=shift.business_id,
+                staff_id=staff_member.id,
+                message_type="sick_leave_email",
+                platform="email",
+                phone_number=staff_member.email,
+                message_content=email_content,
+                status="sent" if email_result.get("success") else "failed",
+                priority="high",
+                metadata={
+                    "shift_id": shift.id,
+                    "sick_staff_id": sick_staff.id,
+                    "required_skill": shift.required_skill,
+                    "shift_date": shift.date.isoformat(),
+                    "shift_time": f"{shift.start_time}-{shift.end_time}",
+                    "email_success": email_result.get("success"),
+                    "email_id": email_result.get("message_id")
+                }
+            )
+            
+            self.db.add(message_log)
+            self.db.commit()
+            
+            logger.info(f"Email notification sent to {staff_member.name} ({staff_member.email}) for sick leave replacement")
+            
+            return {
+                "success": email_result.get("success", False),
+                "staff_id": staff_member.id,
+                "staff_name": staff_member.name,
+                "email": staff_member.email,
+                "message_id": email_result.get("message_id"),
+                "error": email_result.get("error")
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to send email to {staff_member.name}: {str(e)}")
+            return {
+                "success": False,
+                "staff_id": staff_member.id,
+                "staff_name": staff_member.name,
+                "email": staff_member.email,
+                "error": str(e)
+            } 

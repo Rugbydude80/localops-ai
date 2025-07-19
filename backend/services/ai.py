@@ -8,16 +8,19 @@ logger = logging.getLogger(__name__)
 
 class AIService:
     def __init__(self):
-        self.client = openai.AsyncOpenAI(
-            api_key=os.getenv("OPENAI_API_KEY")
-        )
-        self.model = "gpt-4-turbo"  # Using GPT-4 Turbo for cost efficiency
-        
-        if not os.getenv("OPENAI_API_KEY"):
-            logger.warning("OpenAI API key not configured. AI features will be simulated.")
-            self.enabled = False
-        else:
+        try:
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                raise ValueError("OPENAI_API_KEY not found in environment variables")
+            
+            self.client = openai.AsyncOpenAI(api_key=api_key)
+            self.model = "gpt-4o-mini"  # Using GPT-4.1 Mini for cost efficiency
             self.enabled = True
+        except Exception as e:
+            logger.warning(f"OpenAI client initialization failed: {str(e)}. AI features will be simulated.")
+            self.client = None
+            self.model = "gpt-4o-mini"  # Keep model name even when disabled for type safety
+            self.enabled = False
     
     async def generate_coverage_message(
         self,
@@ -64,6 +67,9 @@ class AIService:
         """
         
         try:
+            if not self.client:
+                raise Exception("OpenAI client not initialized")
+                
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -77,7 +83,11 @@ class AIService:
                 temperature=0.7
             )
             
-            ai_message = response.choices[0].message.content.strip()
+            ai_message = response.choices[0].message.content
+            if ai_message:
+                ai_message = ai_message.strip()
+            else:
+                raise Exception("Empty response from OpenAI")
             
             # Add custom message if provided
             if custom_message:

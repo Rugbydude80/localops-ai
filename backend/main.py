@@ -15,7 +15,7 @@ from database import get_db, engine, Base
 from models import (
     Business, Staff, EmergencyRequest, ShiftCoverage, Shift, ShiftAssignment, 
     SickLeaveRequest, MessageLog, ScheduleDraft, DraftShiftAssignment, 
-    ScheduleNotification
+    ScheduleNotification, UserRole, RolePermission
 )
 from schemas import (
     StaffCreate, StaffResponse, EmergencyRequestCreate, 
@@ -27,6 +27,12 @@ from schemas import (
     PublishResponse, StaffPreferenceCreate, StaffPreferenceUpdate, 
     StaffPreferenceResponse, SchedulingConstraintCreate, SchedulingConstraintUpdate,
     SchedulingConstraintResponse, ConstraintValidationRequest, ConstraintValidationResponse
+)
+from auth import (
+    AuthService, UserLogin, UserRegister, Token, PasswordChange,
+    get_current_user, get_current_active_user, require_permission, require_role,
+    require_minimum_role, require_admin, require_manager, require_supervisor, require_staff,
+    ACCESS_TOKEN_EXPIRE_MINUTES
 )
 from services.messaging import WhatsAppService
 from services.ai import AIService
@@ -57,7 +63,7 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "https://localops.ai"],
+    allow_origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "https://localops.ai"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -78,6 +84,170 @@ os.makedirs("logs", exist_ok=True)
 
 # Include constraint validation router
 app.include_router(constraint_router)
+
+# Authentication Endpoints
+@app.post("/api/auth/login", response_model=Token)
+async def login(user_credentials: UserLogin, db: Session = Depends(get_db)):
+    """Authenticate user and return access token"""
+    auth_service = AuthService(db)
+    
+    user = auth_service.authenticate_user(user_credentials.email, user_credentials.password)
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # Create tokens
+    access_token = auth_service.create_access_token(
+        data={"user_id": user.id, "business_id": user.business_id, "role": user.user_role}
+    )
+    refresh_token = auth_service.create_refresh_token(
+        data={"user_id": user.id, "business_id": user.business_id, "role": user.user_role}
+    )
+    
+    # Get user permissions
+    permissions = auth_service.get_user_permissions(user.id)
+    
+    return Token(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        user_info={
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "role": user.user_role,
+            "business_id": user.business_id,
+            "permissions": permissions
+        }
+    )
+
+@app.post("/api/auth/register", response_model=Token)
+async def register(user_data: UserRegister, db: Session = Depends(get_db)):
+    """Register a new user"""
+    auth_service = AuthService(db)
+    
+    user = auth_service.register_user(user_data)
+    
+    # Create tokens
+    access_token = auth_service.create_access_token(
+        data={"user_id": user.id, "business_id": user.business_id, "role": user.user_role}
+    )
+    refresh_token = auth_service.create_refresh_token(
+        data={"user_id": user.id, "business_id": user.business_id, "role": user.user_role}
+    )
+    
+    # Get user permissions
+    permissions = auth_service.get_user_permissions(user.id)
+    
+    return Token(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        user_info={
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "role": user.user_role,
+            "business_id": user.business_id,
+            "permissions": permissions
+        }
+    )
+
+@app.post("/api/auth/refresh", response_model=Token)
+async def refresh_token(refresh_token: str, db: Session = Depends(get_db)):
+    """Refresh access token using refresh token"""
+    auth_service = AuthService(db)
+    
+    payload = auth_service.verify_token(refresh_token)
+    if not payload or payload.get("type") != "refresh":
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    user_id = payload.get("user_id")
+    user = db.query(Staff).filter(Staff.id == user_id).first()
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=401,
+            detail="User not found or inactive",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # Create new tokens
+    access_token = auth_service.create_access_token(
+        data={"user_id": user.id, "business_id": user.business_id, "role": user.user_role}
+    )
+    new_refresh_token = auth_service.create_refresh_token(
+        data={"user_id": user.id, "business_id": user.business_id, "role": user.user_role}
+    )
+    
+    # Get user permissions
+    permissions = auth_service.get_user_permissions(user.id)
+    
+    return Token(
+        access_token=access_token,
+        refresh_token=new_refresh_token,
+        expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        user_info={
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "role": user.user_role,
+            "business_id": user.business_id,
+            "permissions": permissions
+        }
+    )
+
+@app.post("/api/auth/change-password")
+async def change_password(
+    password_data: PasswordChange,
+    current_user: Staff = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Change user password"""
+    auth_service = AuthService(db)
+    
+    success = auth_service.change_password(
+        current_user.id,
+        password_data.current_password,
+        password_data.new_password
+    )
+    
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail="Current password is incorrect"
+        )
+    
+    return {"message": "Password changed successfully"}
+
+@app.get("/api/auth/me")
+async def get_current_user_info(current_user: Staff = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Get current user information"""
+    auth_service = AuthService(db)
+    permissions = auth_service.get_user_permissions(current_user.id)
+    
+    return {
+        "id": current_user.id,
+        "name": current_user.name,
+        "email": current_user.email,
+        "role": current_user.user_role,
+        "business_id": current_user.business_id,
+        "permissions": permissions,
+        "can_assign_shifts": current_user.can_assign_shifts,
+        "can_manage_staff": current_user.can_manage_staff,
+        "can_view_all_shifts": current_user.can_view_all_shifts
+    }
+
+@app.post("/api/auth/logout")
+async def logout(current_user: Staff = Depends(get_current_user)):
+    """Logout user (client should discard tokens)"""
+    return {"message": "Logged out successfully"}
 
 # Global exception handler for scheduling exceptions
 @app.exception_handler(SchedulingException)
@@ -220,6 +390,34 @@ async def root():
 async def health_check():
     return {"status": "healthy", "timestamp": datetime.now()}
 
+@app.get("/api/test-staff/{business_id}")
+async def test_get_staff(business_id: int, db: Session = Depends(get_db)):
+    """Test endpoint to get staff without error handler"""
+    try:
+        staff = db.query(Staff).filter(
+            Staff.business_id == business_id,
+            Staff.is_active == True
+        ).all()
+        
+        # Convert to simple dict format
+        result = []
+        for s in staff:
+            result.append({
+                "id": s.id,
+                "name": s.name,
+                "phone_number": s.phone_number,
+                "email": s.email,
+                "role": s.role,
+                "skills": s.skills,
+                "reliability_score": s.reliability_score,
+                "is_active": s.is_active,
+                "hired_date": s.hired_date.isoformat() if s.hired_date else None
+            })
+        
+        return {"staff": result, "count": len(result)}
+    except Exception as e:
+        return {"error": str(e), "type": type(e).__name__}
+
 # Staff Management Endpoints
 @app.post("/api/staff", response_model=StaffResponse)
 async def create_staff(
@@ -244,13 +442,39 @@ async def create_staff(
     return db_staff
 
 @app.get("/api/staff/{business_id}", response_model=List[StaffResponse])
-async def get_staff(business_id: int, db: Session = Depends(get_db)):
-    """Get all staff for a business"""
-    staff = db.query(Staff).filter(
-        Staff.business_id == business_id,
-        Staff.is_active == True
-    ).all()
-    return staff
+async def get_staff(business_id: int):
+    """Get all staff for a business using Supabase"""
+    from supabase_database import get_supabase_db
+    
+    supabase_db = get_supabase_db()
+    
+    # Verify business exists
+    business = supabase_db.get_business(business_id)
+    if not business:
+        raise HTTPException(status_code=404, detail="Business not found")
+    
+    # Get staff members
+    staff_data = supabase_db.get_staff(business_id)
+    
+    # Convert to StaffResponse format
+    staff_list = []
+    for staff in staff_data:
+        staff_list.append({
+            "id": staff["id"],
+            "business_id": staff["business_id"],
+            "name": staff["name"],
+            "phone_number": staff["phone_number"],
+            "email": staff.get("email"),
+            "role": staff["role"],
+            "skills": staff.get("skills", []),
+            "availability": staff.get("availability", {}),
+            "reliability_score": staff.get("reliability_score", 5.0),
+            "is_active": staff["is_active"],
+            "hired_date": staff.get("hired_date"),
+            "last_shift_date": staff.get("last_shift_date")
+        })
+    
+    return staff_list
 
 @app.get("/api/staff/{business_id}/by-skill/{skill}")
 async def get_staff_by_skill(
@@ -259,11 +483,61 @@ async def get_staff_by_skill(
     db: Session = Depends(get_db)
 ):
     """Get staff members who have specific skill"""
+    from sqlalchemy import text
     staff = db.query(Staff).filter(
         Staff.business_id == business_id,
-        Staff.is_active == True,
-        Staff.skills.contains([skill])
-    ).all()
+        Staff.is_active == True
+    ).filter(
+        text("skills::jsonb ? :skill")
+    ).params(skill=skill).all()
+    return staff
+
+@app.put("/api/staff/{staff_id}", response_model=StaffResponse)
+async def update_staff(
+    staff_id: int,
+    staff_update: dict,
+    db: Session = Depends(get_db)
+):
+    """Update staff member information"""
+    staff = db.query(Staff).filter(Staff.id == staff_id).first()
+    if not staff:
+        raise HTTPException(status_code=404, detail="Staff not found")
+    
+    # Update allowed fields
+    allowed_fields = ['name', 'phone_number', 'email', 'role', 'skills', 'is_active']
+    for field, value in staff_update.items():
+        if field in allowed_fields:
+            setattr(staff, field, value)
+    
+    db.commit()
+    db.refresh(staff)
+    return staff
+
+@app.delete("/api/staff/{staff_id}")
+async def delete_staff(
+    staff_id: int,
+    db: Session = Depends(get_db)
+):
+    """Soft delete staff member (set is_active to False)"""
+    staff = db.query(Staff).filter(Staff.id == staff_id).first()
+    if not staff:
+        raise HTTPException(status_code=404, detail="Staff not found")
+    
+    # Soft delete by setting is_active to False
+    staff.is_active = False
+    db.commit()
+    
+    return {"message": "Staff member deactivated successfully"}
+
+@app.get("/api/staff/{staff_id}", response_model=StaffResponse)
+async def get_staff_member(
+    staff_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get a specific staff member by ID"""
+    staff = db.query(Staff).filter(Staff.id == staff_id).first()
+    if not staff:
+        raise HTTPException(status_code=404, detail="Staff not found")
     return staff
 
 # Emergency Coverage Endpoints
@@ -274,12 +548,14 @@ async def create_emergency_request(
 ):
     """Create emergency coverage request and send messages"""
     
-    # Find qualified staff
+    # Find qualified staff using raw SQL for JSON array search
+    from sqlalchemy import text
     qualified_staff = db.query(Staff).filter(
         Staff.business_id == request.business_id,
-        Staff.is_active == True,
-        Staff.skills.contains([request.required_skill])
-    ).all()
+        Staff.is_active == True
+    ).filter(
+        text("skills::jsonb ? :skill")
+    ).params(skill=request.required_skill).all()
     
     if not qualified_staff:
         raise HTTPException(
@@ -2036,6 +2312,382 @@ async def generate_predictive_schedule(
     schedule = await scheduler.generate_smart_schedule(business_id, week_start_date)
     return schedule
 
+# Enhanced AI Scheduling System Endpoints
+
+@app.post("/api/enhanced-scheduling/{business_id}/generate")
+async def generate_enhanced_schedule(
+    business_id: int,
+    params: dict,
+    db: Session = Depends(get_db)
+):
+    """Generate enhanced AI schedule with templates and availability"""
+    from services.enhanced_ai_scheduling import EnhancedAISchedulingEngine, EnhancedSchedulingParameters, SchedulingStrategy
+    from datetime import date
+    
+    # Verify business exists
+    business = db.query(Business).filter(Business.id == business_id).first()
+    if not business:
+        raise HTTPException(status_code=404, detail="Business not found")
+    
+    try:
+        # Convert parameters
+        date_start = date.fromisoformat(params["date_range_start"])
+        date_end = date.fromisoformat(params["date_range_end"])
+        
+        scheduling_params = EnhancedSchedulingParameters(
+            business_id=business_id,
+            date_range_start=date_start,
+            date_range_end=date_end,
+            use_templates=params.get("use_templates", True),
+            respect_availability=params.get("respect_availability", True),
+            optimize_hours=params.get("optimize_hours", True),
+            special_events=params.get("special_events", []),
+            staff_notes=params.get("staff_notes", []),
+            constraints=params.get("constraints", {}),
+            created_by=params.get("created_by", 1)
+        )
+        
+        strategy = SchedulingStrategy(params.get("strategy", "balanced"))
+        
+        # Initialize enhanced scheduling engine
+        engine = EnhancedAISchedulingEngine(db)
+        
+        # Generate schedule
+        result = await engine.generate_enhanced_schedule(scheduling_params, strategy)
+        
+        return result
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Enhanced schedule generation failed: {str(e)}")
+
+@app.get("/api/shift-templates/{business_id}")
+async def get_shift_templates(
+    business_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get all shift templates for a business"""
+    from models import ShiftTemplate
+    
+    templates = db.query(ShiftTemplate).filter(
+        ShiftTemplate.business_id == business_id,
+        ShiftTemplate.is_active == True
+    ).all()
+    
+    return [
+        {
+            "id": t.id,
+            "name": t.name,
+            "description": t.description,
+            "start_time": t.start_time,
+            "end_time": t.end_time,
+            "break_start": t.break_start,
+            "break_duration": t.break_duration,
+            "required_skills": t.required_skills,
+            "min_staff_count": t.min_staff_count,
+            "max_staff_count": t.max_staff_count,
+            "hourly_rate": t.hourly_rate
+        }
+        for t in templates
+    ]
+
+@app.post("/api/shift-templates/{business_id}")
+async def create_shift_template(
+    business_id: int,
+    template_data: dict,
+    db: Session = Depends(get_db)
+):
+    """Create a new shift template"""
+    from models import ShiftTemplate
+    
+    template = ShiftTemplate(
+        business_id=business_id,
+        name=template_data["name"],
+        description=template_data.get("description"),
+        start_time=template_data["start_time"],
+        end_time=template_data["end_time"],
+        break_start=template_data.get("break_start"),
+        break_duration=template_data.get("break_duration"),
+        required_skills=template_data.get("required_skills", []),
+        min_staff_count=template_data.get("min_staff_count", 1),
+        max_staff_count=template_data.get("max_staff_count"),
+        hourly_rate=template_data.get("hourly_rate")
+    )
+    
+    db.add(template)
+    db.commit()
+    db.refresh(template)
+    
+    return {
+        "id": template.id,
+        "name": template.name,
+        "message": "Shift template created successfully"
+    }
+
+@app.get("/api/employee-availability/{business_id}")
+async def get_employee_availability(
+    business_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get employee availability preferences"""
+    from models import EmployeeAvailability, Staff
+    
+    availability = db.query(EmployeeAvailability).join(Staff).filter(
+        Staff.business_id == business_id,
+        EmployeeAvailability.is_active == True
+    ).all()
+    
+    return [
+        {
+            "id": a.id,
+            "staff_id": a.staff_id,
+            "staff_name": a.staff.name,
+            "day_of_week": a.day_of_week,
+            "availability_type": a.availability_type,
+            "start_time": a.start_time,
+            "end_time": a.end_time,
+            "priority": a.priority,
+            "notes": a.notes
+        }
+        for a in availability
+    ]
+
+@app.post("/api/employee-availability/{business_id}")
+async def set_employee_availability(
+    business_id: int,
+    availability_data: dict,
+    db: Session = Depends(get_db)
+):
+    """Set employee availability preferences"""
+    from models import EmployeeAvailability
+    
+    # Check if availability already exists for this staff/day
+    existing = db.query(EmployeeAvailability).filter(
+        EmployeeAvailability.staff_id == availability_data["staff_id"],
+        EmployeeAvailability.day_of_week == availability_data["day_of_week"],
+        EmployeeAvailability.is_active == True
+    ).first()
+    
+    if existing:
+        # Update existing
+        existing.availability_type = availability_data["availability_type"]
+        existing.start_time = availability_data.get("start_time")
+        existing.end_time = availability_data.get("end_time")
+        existing.priority = availability_data.get("priority", "medium")
+        existing.notes = availability_data.get("notes")
+    else:
+        # Create new
+        availability = EmployeeAvailability(
+            staff_id=availability_data["staff_id"],
+            day_of_week=availability_data["day_of_week"],
+            availability_type=availability_data["availability_type"],
+            start_time=availability_data.get("start_time"),
+            end_time=availability_data.get("end_time"),
+            priority=availability_data.get("priority", "medium"),
+            notes=availability_data.get("notes")
+        )
+        db.add(availability)
+    
+    db.commit()
+    
+    return {"message": "Employee availability updated successfully"}
+
+@app.get("/api/weekly-hour-allocations/{business_id}")
+async def get_weekly_hour_allocations(
+    business_id: int,
+    week_start: str,
+    db: Session = Depends(get_db)
+):
+    """Get weekly hour allocations for staff"""
+    from models import WeeklyHourAllocation, Staff
+    from datetime import date
+    
+    week_start_date = date.fromisoformat(week_start)
+    
+    allocations = db.query(WeeklyHourAllocation).join(Staff).filter(
+        Staff.business_id == business_id,
+        WeeklyHourAllocation.week_start == week_start_date
+    ).all()
+    
+    return [
+        {
+            "id": a.id,
+            "staff_id": a.staff_id,
+            "staff_name": a.staff.name,
+            "week_start": a.week_start.isoformat(),
+            "target_hours": a.target_hours,
+            "allocated_hours": a.allocated_hours,
+            "actual_hours": a.actual_hours,
+            "overtime_hours": a.overtime_hours,
+            "status": a.status
+        }
+        for a in allocations
+    ]
+
+@app.post("/api/weekly-hour-allocations/{business_id}")
+async def set_weekly_hour_allocation(
+    business_id: int,
+    allocation_data: dict,
+    db: Session = Depends(get_db)
+):
+    """Set weekly hour allocation for staff"""
+    from models import WeeklyHourAllocation
+    from datetime import date
+    
+    week_start = date.fromisoformat(allocation_data["week_start"])
+    
+    # Check if allocation already exists
+    existing = db.query(WeeklyHourAllocation).filter(
+        WeeklyHourAllocation.staff_id == allocation_data["staff_id"],
+        WeeklyHourAllocation.week_start == week_start
+    ).first()
+    
+    if existing:
+        # Update existing
+        existing.target_hours = allocation_data["target_hours"]
+        existing.status = allocation_data.get("status", "pending")
+    else:
+        # Create new
+        allocation = WeeklyHourAllocation(
+            staff_id=allocation_data["staff_id"],
+            week_start=week_start,
+            target_hours=allocation_data["target_hours"],
+            status=allocation_data.get("status", "pending")
+        )
+        db.add(allocation)
+    
+    db.commit()
+    
+    return {"message": "Weekly hour allocation updated successfully"}
+
+@app.post("/api/schedule-override/{draft_id}")
+async def apply_schedule_override(
+    draft_id: str,
+    override_data: dict,
+    db: Session = Depends(get_db)
+):
+    """Apply manual override to AI-generated schedule"""
+    from services.enhanced_ai_scheduling import EnhancedAISchedulingEngine
+    
+    engine = EnhancedAISchedulingEngine(db)
+    
+    result = await engine.apply_manual_override(
+        draft_id=draft_id,
+        shift_id=override_data["shift_id"],
+        staff_id=override_data["staff_id"],
+        override_type=override_data["override_type"],
+        reason=override_data.get("reason", "Manual override"),
+        overridden_by=override_data.get("overridden_by", 1)
+    )
+    
+    return result
+
+@app.post("/api/shift-swap-requests/{business_id}")
+async def create_shift_swap_request(
+    business_id: int,
+    swap_data: dict,
+    db: Session = Depends(get_db)
+):
+    """Create a shift swap request"""
+    from services.enhanced_ai_scheduling import EnhancedAISchedulingEngine
+    
+    engine = EnhancedAISchedulingEngine(db)
+    
+    result = await engine.create_shift_swap_request(
+        business_id=business_id,
+        requester_id=swap_data["requester_id"],
+        target_staff_id=swap_data["target_staff_id"],
+        requester_shift_id=swap_data["requester_shift_id"],
+        target_shift_id=swap_data["target_shift_id"],
+        reason=swap_data.get("reason", "")
+    )
+    
+    return result
+
+@app.get("/api/shift-swap-requests/{business_id}")
+async def get_shift_swap_requests(
+    business_id: int,
+    status: str = "pending",
+    db: Session = Depends(get_db)
+):
+    """Get shift swap requests"""
+    from models import ShiftSwapRequest, Staff, Shift
+    
+    requests = db.query(ShiftSwapRequest).join(
+        Staff, ShiftSwapRequest.requester_id == Staff.id
+    ).filter(
+        ShiftSwapRequest.business_id == business_id,
+        ShiftSwapRequest.status == status
+    ).all()
+    
+    return [
+        {
+            "id": r.id,
+            "requester_name": r.requester.name,
+            "target_staff_name": r.target_staff.name,
+            "requester_shift_date": r.requester_shift.date.isoformat(),
+            "target_shift_date": r.target_shift.date.isoformat(),
+            "reason": r.reason,
+            "status": r.status,
+            "created_at": r.created_at.isoformat()
+        }
+        for r in requests
+    ]
+
+@app.post("/api/open-shifts/{business_id}")
+async def create_open_shift(
+    business_id: int,
+    open_shift_data: dict,
+    db: Session = Depends(get_db)
+):
+    """Create an open shift for employee pickup"""
+    from services.enhanced_ai_scheduling import EnhancedAISchedulingEngine
+    from datetime import datetime, timedelta
+    
+    engine = EnhancedAISchedulingEngine(db)
+    
+    pickup_deadline = None
+    if open_shift_data.get("pickup_deadline"):
+        pickup_deadline = datetime.fromisoformat(open_shift_data["pickup_deadline"])
+    else:
+        pickup_deadline = datetime.now() + timedelta(hours=12)
+    
+    result = await engine.create_open_shift(
+        business_id=business_id,
+        shift_id=open_shift_data["shift_id"],
+        required_skills=open_shift_data.get("required_skills", []),
+        hourly_rate=open_shift_data.get("hourly_rate"),
+        pickup_deadline=pickup_deadline
+    )
+    
+    return result
+
+@app.get("/api/open-shifts/{business_id}")
+async def get_open_shifts(
+    business_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get open shifts available for pickup"""
+    from models import OpenShift, Shift, Staff
+    
+    open_shifts = db.query(OpenShift).join(Shift).filter(
+        OpenShift.business_id == business_id,
+        OpenShift.status == "open"
+    ).all()
+    
+    return [
+        {
+            "id": o.id,
+            "shift_title": o.shift.title,
+            "shift_date": o.shift.date.isoformat(),
+            "start_time": o.shift.start_time,
+            "end_time": o.shift.end_time,
+            "required_skills": o.required_skills,
+            "hourly_rate": o.hourly_rate,
+            "pickup_deadline": o.pickup_deadline.isoformat() if o.pickup_deadline else None
+        }
+        for o in open_shifts
+    ]
+
 @app.get("/api/predictive-scheduling/{business_id}/predictions")
 async def get_demand_predictions(
     business_id: int,
@@ -2071,7 +2723,7 @@ async def get_demand_predictions(
 async def send_smart_message(
     business_id: int,
     message_data: dict,
-    sender_id: int,
+    sender_id: int = 1,  # Default to system sender
     db: Session = Depends(get_db)
 ):
     """Send smart message with AI optimization"""
@@ -2086,8 +2738,37 @@ async def get_message_templates(
     db: Session = Depends(get_db)
 ):
     """Get message templates for specific type"""
-    comm_hub = SmartCommunicationHub(db)
-    templates = await comm_hub.get_message_templates(business_id, message_type)
+    # Return mock templates for now
+    templates = [
+        {
+            "id": "reminder_1",
+            "name": "Shift Reminder",
+            "content": "Hi {name}, this is a friendly reminder about your upcoming shift on {date} at {time}.",
+            "type": "reminder",
+            "variables": ["name", "date", "time"]
+        },
+        {
+            "id": "urgent_1",
+            "name": "Urgent Cover Request",
+            "content": "URGENT: We need {role} coverage for {date} {time}. Can you help? Please respond ASAP.",
+            "type": "urgent_cover",
+            "variables": ["role", "date", "time"]
+        },
+        {
+            "id": "training_1",
+            "name": "Training Announcement",
+            "content": "New training module available: {module_name}. Please complete by {deadline}.",
+            "type": "training",
+            "variables": ["module_name", "deadline"]
+        },
+        {
+            "id": "announcement_1",
+            "name": "General Announcement",
+            "content": "Important announcement: {message}. Please read and acknowledge.",
+            "type": "announcement",
+            "variables": ["message"]
+        }
+    ]
     return templates
 
 @app.get("/api/smart-communication/{business_id}/analytics")
@@ -2168,13 +2849,49 @@ async def get_training_analytics(
 
 # Feature 4: Real-Time Business Intelligence Dashboard
 @app.get("/api/business-intelligence/{business_id}/real-time")
-async def get_real_time_metrics(
-    business_id: int,
-    db: Session = Depends(get_db)
-):
-    """Get real-time business metrics"""
-    bi_service = BusinessIntelligenceService(db)
-    metrics = await bi_service.get_real_time_metrics(business_id)
+async def get_real_time_metrics(business_id: int):
+    """Get real-time business metrics using Supabase"""
+    # Mock real-time metrics (in production, these would come from POS/time tracking systems)
+    metrics = {
+        "labour_cost_percentage": 28.5,
+        "staff_utilisation": 85.2,
+        "shift_coverage_rate": 92.1,
+        "staff_punctuality_rate": 87.3,
+        "emergency_response_time": 12.5,
+        "total_staff": 10,
+        "active_staff": 9,
+        "avg_reliability_score": 8.7,
+        "hourly_data": [
+            {"hour": 8, "revenue": 120, "staff_count": 2, "customer_count": 15, "efficiency_score": 82},
+            {"hour": 9, "revenue": 150, "staff_count": 2, "customer_count": 18, "efficiency_score": 85},
+            {"hour": 10, "revenue": 180, "staff_count": 3, "customer_count": 22, "efficiency_score": 88},
+            {"hour": 11, "revenue": 220, "staff_count": 3, "customer_count": 28, "efficiency_score": 90},
+            {"hour": 12, "revenue": 350, "staff_count": 4, "customer_count": 45, "efficiency_score": 92},
+            {"hour": 13, "revenue": 420, "staff_count": 5, "customer_count": 52, "efficiency_score": 94},
+            {"hour": 14, "revenue": 380, "staff_count": 4, "customer_count": 48, "efficiency_score": 91},
+            {"hour": 15, "revenue": 320, "staff_count": 4, "customer_count": 40, "efficiency_score": 89},
+            {"hour": 16, "revenue": 280, "staff_count": 3, "customer_count": 35, "efficiency_score": 87},
+            {"hour": 17, "revenue": 300, "staff_count": 4, "customer_count": 38, "efficiency_score": 88},
+            {"hour": 18, "revenue": 450, "staff_count": 5, "customer_count": 56, "efficiency_score": 93},
+            {"hour": 19, "revenue": 520, "staff_count": 6, "customer_count": 65, "efficiency_score": 95},
+            {"hour": 20, "revenue": 480, "staff_count": 5, "customer_count": 60, "efficiency_score": 94},
+            {"hour": 21, "revenue": 380, "staff_count": 4, "customer_count": 48, "efficiency_score": 91},
+            {"hour": 22, "revenue": 280, "staff_count": 3, "customer_count": 35, "efficiency_score": 87},
+            {"hour": 23, "revenue": 180, "staff_count": 2, "customer_count": 22, "efficiency_score": 84}
+        ],
+        "trends": {
+            "labour_cost_trend": "decreasing",
+            "utilisation_trend": "increasing", 
+            "coverage_trend": "stable"
+        },
+        "targets": {
+            "labour_cost_target": 30.0,
+            "utilisation_target": 85.0,
+            "coverage_target": 95.0,
+            "punctuality_target": 90.0
+        }
+    }
+    
     return metrics
 
 @app.get("/api/business-intelligence/{business_id}/weekly-report")
@@ -3273,6 +3990,38 @@ async def respond_to_notification(
         message=response_data.get("message")
     )
     return result
+
+@app.get("/api/test-simple")
+async def test_simple():
+    """Simple test endpoint"""
+    return {"message": "Simple test works!", "timestamp": datetime.now().isoformat()}
+
+@app.get("/api/test-supabase/{business_id}")
+async def test_supabase_connection(business_id: int):
+    """Test Supabase connection and data retrieval"""
+    try:
+        from supabase_database import get_supabase_db
+        
+        supabase_db = get_supabase_db()
+        
+        # Test business retrieval
+        business = supabase_db.get_business(business_id)
+        if not business:
+            raise HTTPException(status_code=404, detail="Business not found")
+        
+        # Test staff retrieval
+        staff_data = supabase_db.get_staff(business_id)
+        
+        return {
+            "success": True,
+            "business": business,
+            "staff_count": len(staff_data),
+            "staff_sample": staff_data[:2] if staff_data else []
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Supabase error: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8001)

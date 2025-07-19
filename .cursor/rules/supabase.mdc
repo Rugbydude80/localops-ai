@@ -1,0 +1,10 @@
+---
+description: >
+  Only use Supabase for all database operations. 
+  SQLite is not permitted under any circumstances.
+globs:
+  - "**/*"
+rules:
+  - "All database reads and writes must use Supabase. Do not use SQLite for any reason, including development, testing, or production."
+alwaysApply: true
+---
