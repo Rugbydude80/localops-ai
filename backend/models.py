@@ -734,3 +734,192 @@ class ScheduleAnalytics(Base):
     
     # Relationships
     business = relationship("Business")
+
+# SumUp POS Integration Models (Paid Bolt-On)
+class SumUpIntegration(Base):
+    """SumUp POS integration configuration and status"""
+    __tablename__ = "sumup_integrations"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
+    is_enabled = Column(Boolean, default=False, index=True)
+    is_entitled = Column(Boolean, default=False, index=True)  # Has paid bolt-on subscription
+    access_token = Column(String(500))  # Encrypted OAuth access token
+    refresh_token = Column(String(500))  # Encrypted OAuth refresh token
+    token_expires_at = Column(DateTime)
+    merchant_id = Column(String(100))  # SumUp merchant ID
+    last_sync_at = Column(DateTime)
+    sync_frequency_hours = Column(Integer, default=1)  # How often to sync
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    # Relationships
+    business = relationship("Business")
+
+class SumUpLocation(Base):
+    """Mapping between SumUp locations and LocalOps stores"""
+    __tablename__ = "sumup_locations"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
+    sumup_location_id = Column(String(100), nullable=False, index=True)
+    sumup_location_name = Column(String(200))
+    localops_location_id = Column(Integer, ForeignKey("locations.id"))  # Link to LocalOps location
+    is_active = Column(Boolean, default=True, index=True)
+    created_at = Column(DateTime, default=datetime.now)
+    
+    # Relationships
+    business = relationship("Business")
+    localops_location = relationship("Location")
+
+class SalesData(Base):
+    """Sales transaction data from SumUp POS"""
+    __tablename__ = "sales_data"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
+    sumup_transaction_id = Column(String(100), nullable=False, index=True)
+    sumup_location_id = Column(String(100), nullable=False, index=True)
+    sale_time = Column(DateTime, nullable=False, index=True)
+    sale_value = Column(Float, nullable=False)  # Total transaction amount
+    payment_type = Column(String(50))  # card, cash, etc.
+    items = Column(JSON)  # Array of items sold
+    staff_id = Column(Integer, ForeignKey("staff.id"))  # Staff member who processed
+    shift_id = Column(Integer, ForeignKey("shifts.id"))  # Associated shift if any
+    customer_count = Column(Integer, default=1)
+    tip_amount = Column(Float, default=0)
+    discount_amount = Column(Float, default=0)
+    tax_amount = Column(Float, default=0)
+    created_at = Column(DateTime, default=datetime.now)
+    
+    # Relationships
+    business = relationship("Business")
+    staff = relationship("Staff")
+    shift = relationship("Shift")
+
+class SalesItem(Base):
+    """Individual items from sales transactions"""
+    __tablename__ = "sales_items"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    sale_id = Column(Integer, ForeignKey("sales_data.id"), nullable=False, index=True)
+    item_sku = Column(String(100), index=True)
+    item_name = Column(String(200), nullable=False)
+    quantity = Column(Float, nullable=False)
+    unit_price = Column(Float, nullable=False)
+    total_price = Column(Float, nullable=False)
+    category = Column(String(100))  # food, drink, merchandise, etc.
+    created_at = Column(DateTime, default=datetime.now)
+    
+    # Relationships
+    sale = relationship("SalesData")
+
+class IntegrationLog(Base):
+    """Audit trail for integration operations"""
+    __tablename__ = "integration_logs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
+    integration_type = Column(String(50), nullable=False, index=True)  # sumup, etc.
+    operation = Column(String(100), nullable=False)  # sync, auth, error
+    status = Column(String(50), nullable=False)  # success, error, warning
+    message = Column(Text)
+    details = Column(JSON)  # Additional operation details
+    error_code = Column(String(100))
+    error_message = Column(Text)
+    created_at = Column(DateTime, default=datetime.now, index=True)
+    
+    # Relationships
+    business = relationship("Business")
+
+class SalesAnalytics(Base):
+    """Aggregated sales analytics for scheduling insights"""
+    __tablename__ = "sales_analytics"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
+    location_id = Column(Integer, ForeignKey("locations.id"))
+    date = Column(Date, nullable=False, index=True)
+    hour = Column(Integer, nullable=False, index=True)  # 0-23
+    total_sales = Column(Float, default=0)
+    transaction_count = Column(Integer, default=0)
+    average_transaction_value = Column(Float, default=0)
+    customer_count = Column(Integer, default=0)
+    top_selling_items = Column(JSON)  # Most popular items in this hour
+    peak_hour = Column(Boolean, default=False)  # Is this a peak hour
+    created_at = Column(DateTime, default=datetime.now)
+    
+    # Relationships
+    business = relationship("Business")
+    location = relationship("Location")
+
+class StaffSalesPerformance(Base):
+    """Staff sales performance metrics"""
+    __tablename__ = "staff_sales_performance"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    staff_id = Column(Integer, ForeignKey("staff.id"), nullable=False, index=True)
+    business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
+    date = Column(Date, nullable=False, index=True)
+    total_sales = Column(Float, default=0)
+    transaction_count = Column(Integer, default=0)
+    average_transaction_value = Column(Float, default=0)
+    customer_count = Column(Integer, default=0)
+    items_sold = Column(Integer, default=0)
+    performance_score = Column(Float)  # Calculated performance metric
+    created_at = Column(DateTime, default=datetime.now)
+    
+    # Relationships
+    staff = relationship("Staff")
+    business = relationship("Business")
+
+class BoltOnSubscription(Base):
+    """Bolt-on subscription management"""
+    __tablename__ = "bolt_on_subscriptions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
+    bolt_on_type = Column(String(50), nullable=False, index=True)  # sumup_sync, etc.
+    subscription_status = Column(String(50), nullable=False, index=True)  # active, inactive, expired
+    start_date = Column(Date, nullable=False)
+    end_date = Column(Date)
+    monthly_price = Column(Float)
+    features_enabled = Column(JSON)  # List of enabled features
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    # Relationships
+    business = relationship("Business")
+
+# Bolt-On Management Models (Platform Owner Control)
+class BoltOnManagement(Base):
+    """Platform-level bolt-on configuration and control"""
+    __tablename__ = "bolt_on_management"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    bolt_on_type = Column(String(50), nullable=False, index=True)  # sumup_sync, etc.
+    is_platform_enabled = Column(Boolean, default=True)  # Platform-wide enable/disable
+    monthly_price = Column(Float, default=29.99)
+    required_plan = Column(String(50), default="professional")  # Minimum plan required
+    description = Column(Text)
+    features = Column(JSON)  # List of features included
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+class BoltOnAuditLog(Base):
+    """Audit trail for all bolt-on management actions"""
+    __tablename__ = "bolt_on_audit_log"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
+    bolt_on_type = Column(String(50), nullable=False, index=True)
+    action = Column(String(50), nullable=False)  # enable, disable, price_change, etc.
+    performed_by = Column(Integer, ForeignKey("staff.id"), nullable=False)  # staff_id who performed action
+    old_value = Column(JSON)  # Previous state
+    new_value = Column(JSON)  # New state
+    reason = Column(Text)  # Reason for the action
+    created_at = Column(DateTime, default=datetime.now, index=True)
+    
+    # Relationships
+    business = relationship("Business")
+    performer = relationship("Staff", foreign_keys=[performed_by])

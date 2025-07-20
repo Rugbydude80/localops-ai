@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import Head from 'next/head'
-import { CalendarIcon, PlusIcon, UserGroupIcon, ExclamationTriangleIcon, ClockIcon, LockClosedIcon, ShieldCheckIcon, ChatBubbleLeftRightIcon, CogIcon, SparklesIcon } from '@heroicons/react/24/outline'
+import { CalendarIcon, PlusIcon, UserGroupIcon, ExclamationTriangleIcon, ClockIcon, LockClosedIcon, ShieldCheckIcon, ChatBubbleLeftRightIcon, CogIcon, SparklesIcon, DocumentArrowUpIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { format, parseISO, startOfWeek, endOfWeek, addDays, isSameDay } from 'date-fns'
@@ -94,11 +94,29 @@ export default function EnhancedShiftsPage() {
   const [showChat, setShowChat] = useState(false)
   const [showAutoSchedule, setShowAutoSchedule] = useState(false)
   const [showConstraintsModal, setShowConstraintsModal] = useState(false)
+  const [showExcelModal, setShowExcelModal] = useState(false)
   const [selectedShift, setSelectedShift] = useState<Shift | null>(null)
   const [isGeneratingSchedule, setIsGeneratingSchedule] = useState(false)
   const [showAIRecommendations, setShowAIRecommendations] = useState(true)
   const queryClient = useQueryClient()
   const notifications = useNotifications()
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && showExcelModal) {
+        setShowExcelModal(false)
+      }
+      // Ctrl/Cmd + E to open Excel modal
+      if ((event.ctrlKey || event.metaKey) && event.key === 'e') {
+        event.preventDefault()
+        setShowExcelModal(true)
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [showExcelModal])
 
   // Calculate date range for current week
   const startDate = startOfWeek(selectedDate, { weekStartsOn: 1 })
@@ -287,6 +305,14 @@ export default function EnhancedShiftsPage() {
                 </button>
 
                 <button
+                  onClick={() => setShowExcelModal(true)}
+                  className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md"
+                  title="Excel Import/Export (Ctrl+E)"
+                >
+                  <DocumentArrowUpIcon className="h-5 w-5" />
+                </button>
+
+                <button
                   onClick={() => setShowChat(!showChat)}
                   className={`p-2 rounded-md ${
                     showChat 
@@ -435,10 +461,30 @@ export default function EnhancedShiftsPage() {
           </div>
         )}
 
-        {/* Excel Import/Export */}
-        <div className="fixed bottom-4 left-4 z-50">
-          <ExcelImportExport />
-        </div>
+        {/* Excel Import/Export Modal */}
+        {showExcelModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+              <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+                <h2 className="text-xl font-semibold text-gray-900">Excel Import/Export</h2>
+                <button
+                  onClick={() => setShowExcelModal(false)}
+                  className="p-2 hover:bg-gray-100 rounded-lg"
+                >
+                  <XMarkIcon className="h-6 w-6 text-gray-400" />
+                </button>
+              </div>
+              <div className="p-6">
+                <ExcelImportExport 
+                  onDataImported={() => {
+                    queryClient.invalidateQueries({ queryKey: ['shifts'] });
+                    queryClient.invalidateQueries({ queryKey: ['staff'] });
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </>
   )

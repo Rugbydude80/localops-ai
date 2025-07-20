@@ -78,7 +78,7 @@ class APIClient {
 
   // Shift Management
   async getShifts(businessId: number, startDate: string, endDate: string) {
-    return this.request(`/api/schedule/${businessId}/shifts?start_date=${startDate}&end_date=${endDate}`)
+    return this.request(`/api/shifts/${businessId}?start_date=${startDate}&end_date=${endDate}`)
   }
 
   async createShift(businessId: number, shiftData: any) {
@@ -341,7 +341,218 @@ class APIClient {
   async healthCheck() {
     return this.request('/health')
   }
+
+  // Bolt-On Management API
+  async getBoltOnDashboard(boltOnType: string): Promise<{
+    bolt_on_type: string
+    platform_enabled: boolean
+    monthly_price: number
+    total_businesses: number
+    active_subscriptions: number
+    total_revenue: number
+    businesses: Array<{
+      business_id: number
+      business_name: string
+      subscription_tier: string
+      bolt_on_type: string
+      is_enabled: boolean
+      is_entitled: boolean
+      last_sync_at: string | null
+      usage_30d: number | null
+      connection_status: string
+      error_message: string | null
+    }>
+  }> {
+    return this.request(`/api/admin/bolt-ons/${boltOnType}/dashboard`)
+  }
+
+  async toggleBoltOn(boltOnType: string, businessId: number, enable: boolean, reason?: string): Promise<{
+    success: boolean
+    message: string
+    new_status: boolean
+    audit_log_id: number
+  }> {
+    return this.request(`/api/admin/bolt-ons/${boltOnType}/toggle`, {
+      method: 'POST',
+      body: JSON.stringify({
+        business_id: businessId,
+        bolt_on_type: boltOnType,
+        enable,
+        reason
+      })
+    })
+  }
+
+  async performBulkAction(boltOnType: string, action: string, targetPlan?: string, reason?: string): Promise<{
+    success: boolean
+    message: string
+    affected_businesses: number
+    audit_log_ids: number[]
+  }> {
+    return this.request(`/api/admin/bolt-ons/${boltOnType}/bulk-action`, {
+      method: 'POST',
+      body: JSON.stringify({
+        bolt_on_type: boltOnType,
+        action,
+        target_plan: targetPlan,
+        reason
+      })
+    })
+  }
+
+  async getBoltOnAnalytics(boltOnType: string, businessId: number, period: string = '30d'): Promise<{
+    business_id: number
+    business_name: string
+    period: string
+    total_sales: number
+    transaction_count: number
+    average_transaction: number
+    peak_hours: Array<{
+      hour: number
+      sales: number
+      transactions: number
+    }>
+    top_items: Array<{
+      item_name: string
+      total_quantity: number
+      total_revenue: number
+    }>
+    sync_errors: number
+    last_sync_success: boolean
+  }> {
+    return this.request(`/api/admin/bolt-ons/${boltOnType}/business/${businessId}/analytics?period=${period}`)
+  }
+
+  async updateBoltOnConfig(boltOnType: string, config: {
+    is_platform_enabled?: boolean
+    monthly_price?: number
+    required_plan?: string
+    description?: string
+    features?: string[]
+  }): Promise<boolean> {
+    return this.request(`/api/admin/bolt-ons/${boltOnType}/config`, {
+      method: 'PUT',
+      body: JSON.stringify(config)
+    })
+  }
+
+  async getBoltOnAuditLogs(businessId?: number, boltOnType?: string, limit: number = 100): Promise<Array<{
+    id: number
+    business_id: number
+    business_name: string
+    bolt_on_type: string
+    action: string
+    performed_by: number
+    performer_name: string
+    old_value: any
+    new_value: any
+    reason: string
+    created_at: string
+  }>> {
+    const params = new URLSearchParams()
+    if (businessId) params.append('business_id', businessId.toString())
+    if (boltOnType) params.append('bolt_on_type', boltOnType)
+    params.append('limit', limit.toString())
+    
+    return this.request(`/api/admin/bolt-ons/audit-logs?${params.toString()}`)
+  }
+
+  // SumUp Integration Methods
+  async getSumUpStatus(businessId: number): Promise<{
+    is_connected: boolean;
+    is_entitled: boolean;
+    last_sync_at: string | null;
+    sync_frequency_hours: number;
+    merchant_id: string | null;
+    location_count: number;
+    total_transactions: number;
+    last_7_days_sales: number;
+    connection_status: string;
+    error_message: string | null;
+  }> {
+    return this.request(`/integrations/sumup/${businessId}/status`)
+  }
+
+  async getSumUpUpgradePrompt(businessId: number): Promise<{
+    show_upgrade: boolean;
+    current_plan: string;
+    required_plan: string;
+    bolt_on_price: number;
+    features_unlocked: string[];
+    upgrade_url: string | null;
+  }> {
+    return this.request(`/integrations/sumup/${businessId}/upgrade-prompt`)
+  }
+
+  async getSumUpAnalytics(businessId: number): Promise<{
+    period: {
+      start_date: string;
+      end_date: string;
+      days: number;
+    };
+    daily_sales: Array<{
+      date: string;
+      total_sales: number;
+      transaction_count: number;
+      average_transaction: number;
+    }>;
+    hourly_patterns: Array<{
+      hour: number;
+      total_sales: number;
+      transaction_count: number;
+    }>;
+    top_items: Array<{
+      item_name: string;
+      total_quantity: number;
+      total_revenue: number;
+    }>;
+  }> {
+    return this.request(`/integrations/sumup/${businessId}/analytics`)
+  }
+
+  async getSumUpLogs(businessId: number): Promise<Array<{
+    id: number;
+    operation: string;
+    status: string;
+    message: string | null;
+    details: any;
+    error_code: string | null;
+    error_message: string | null;
+    created_at: string;
+  }>> {
+    return this.request(`/integrations/sumup/${businessId}/logs`)
+  }
+
+  async syncSumUp(businessId: number, data: { business_id: number; force_sync: boolean }): Promise<{
+    success: boolean;
+    transactions_synced: number;
+    message: string;
+  }> {
+    return this.request(`/integrations/sumup/${businessId}/sync`, {
+      method: 'POST',
+      body: JSON.stringify(data)
+    })
+  }
+
+  async toggleSumUpIntegration(businessId: number, data: { enable: boolean }): Promise<{
+    success: boolean;
+    message: string;
+  }> {
+    return this.request(`/business/${businessId}/integrations/sumup_sync/toggle`, {
+      method: 'POST',
+      body: JSON.stringify(data)
+    })
+  }
+
+  async disconnectSumUp(businessId: number, data: { business_id: number; revoke_tokens: boolean }): Promise<{
+    success: boolean;
+    message: string;
+  }> {
+    return this.request(`/integrations/sumup/${businessId}/disconnect`, {
+      method: 'POST',
+      body: JSON.stringify(data)
+    })
+  }
 }
 
-export const apiClient = new APIClient()
-export default apiClient 
+export default new APIClient() 

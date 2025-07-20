@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 import uvicorn
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
@@ -15,7 +16,9 @@ from database import get_db, engine, Base
 from models import (
     Business, Staff, EmergencyRequest, ShiftCoverage, Shift, ShiftAssignment, 
     SickLeaveRequest, MessageLog, ScheduleDraft, DraftShiftAssignment, 
-    ScheduleNotification, UserRole, RolePermission
+    ScheduleNotification, UserRole, RolePermission, SumUpIntegration, SumUpLocation,
+    SalesData, SalesItem, IntegrationLog, SalesAnalytics, StaffSalesPerformance,
+    BoltOnSubscription
 )
 from schemas import (
     StaffCreate, StaffResponse, EmergencyRequestCreate, 
@@ -26,7 +29,11 @@ from schemas import (
     DraftShiftAssignmentResponse, ScheduleChange, NotificationSettings,
     PublishResponse, StaffPreferenceCreate, StaffPreferenceUpdate, 
     StaffPreferenceResponse, SchedulingConstraintCreate, SchedulingConstraintUpdate,
-    SchedulingConstraintResponse, ConstraintValidationRequest, ConstraintValidationResponse
+    SchedulingConstraintResponse, ConstraintValidationRequest, ConstraintValidationResponse,
+    SumUpOAuthRequest, SumUpOAuthResponse, SumUpSyncRequest, SumUpSyncResponse,
+    SumUpDisconnectRequest, SumUpDisconnectResponse, SumUpStatusResponse,
+    SumUpUpgradePrompt, BoltOnAdminDashboard, BoltOnToggleResponse, BoltOnBulkActionResponse,
+    BoltOnToggleRequest, BoltOnBulkActionRequest, BoltOnManagementUpdate
 )
 from auth import (
     AuthService, UserLogin, UserRegister, Token, PasswordChange,
@@ -45,11 +52,13 @@ from services.notification_service import NotificationService
 from services.collaboration_service import collaboration_manager
 from services.error_handler import error_handler, ErrorContext
 from services.app_notification_service import AppNotificationService
+from services.sumup_integration import SumUpIntegrationService
 from exceptions import (
     SchedulingException, AIServiceException, NotificationException,
     ConstraintViolationException, InsufficientStaffException, ExternalAPIException
 )
 from api_constraint_validation import router as constraint_router
+from services.bolt_on_management import BoltOnManagementService
 
 # Create database tables if they don't exist (for local development)
 Base.metadata.create_all(bind=engine)
@@ -3696,24 +3705,56 @@ async def get_scheduling_constraints(
     db: Session = Depends(get_db)
 ):
     """Get all scheduling constraints for a business"""
-    from models import SchedulingConstraint
-    
-    # Verify business exists
-    business = db.query(Business).filter(Business.id == business_id).first()
-    if not business:
-        raise HTTPException(status_code=404, detail="Business not found")
-    
-    query = db.query(SchedulingConstraint).filter(SchedulingConstraint.business_id == business_id)
-    
-    if active_only:
-        query = query.filter(SchedulingConstraint.is_active == True)
-    
-    if constraint_type:
-        query = query.filter(SchedulingConstraint.constraint_type == constraint_type)
-    
-    constraints = query.order_by(SchedulingConstraint.created_at.desc()).all()
-    
-    return constraints
+    try:
+        from supabase_database import get_supabase_db
+        
+        # Verify business exists using Supabase
+        supabase_db = get_supabase_db()
+        print(f"DEBUG: Supabase DB instance: {supabase_db}")
+        
+        business = supabase_db.get_business(business_id)
+        print(f"DEBUG: Business lookup result: {business}")
+        
+        if not business:
+            raise HTTPException(status_code=404, detail="Business not found")
+        
+        # Get constraints from Supabase
+        try:
+            query = supabase_db.client.table('scheduling_constraints').select('*').eq('business_id', business_id)
+            
+            if active_only:
+                query = query.eq('is_active', True)
+            
+            if constraint_type:
+                query = query.eq('constraint_type', constraint_type)
+            
+            response = query.execute()
+            constraints = response.data
+            
+            # Convert to SchedulingConstraintResponse format
+            from schemas import SchedulingConstraintResponse
+            return [
+                SchedulingConstraintResponse(
+                    id=constraint['id'],
+                    business_id=constraint['business_id'],
+                    constraint_type=constraint['constraint_type'],
+                    constraint_value=constraint['constraint_value'],
+                    priority=constraint.get('priority', 'medium'),
+                    is_active=constraint.get('is_active', True),
+                    created_at=constraint.get('created_at')
+                )
+                for constraint in constraints
+            ]
+            
+        except Exception as e:
+            print(f"DEBUG: Error querying constraints: {e}")
+            # If constraints table doesn't exist or has issues, return empty list
+            # This is expected behavior when the table hasn't been created yet
+            return []
+        
+    except Exception as e:
+        print(f"DEBUG: Error in get_scheduling_constraints: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.put("/api/business/{business_id}/constraints/{constraint_id}", response_model=SchedulingConstraintResponse)
 async def update_scheduling_constraint(
@@ -4022,6 +4063,458 @@ async def test_supabase_connection(business_id: int):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Supabase error: {str(e)}")
+
+# SumUp POS Integration Endpoints (Paid Bolt-On)
+@app.get("/api/integrations/sumup/{business_id}/status", response_model=SumUpStatusResponse)
+async def get_sumup_integration_status(
+    business_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get current SumUp integration status and entitlement"""
+    sumup_service = SumUpIntegrationService(db)
+    return sumup_service.get_integration_status(business_id)
+
+@app.get("/api/integrations/sumup/{business_id}/upgrade-prompt", response_model=SumUpUpgradePrompt)
+async def get_sumup_upgrade_prompt(
+    business_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get upgrade prompt for SumUp integration bolt-on"""
+    sumup_service = SumUpIntegrationService(db)
+    return sumup_service.get_upgrade_prompt(business_id)
+
+@app.post("/api/integrations/sumup/oauth", response_model=SumUpOAuthResponse)
+async def sumup_oauth_callback(
+    oauth_request: SumUpOAuthRequest,
+    db: Session = Depends(get_db)
+):
+    """Handle SumUp OAuth callback and exchange authorization code for tokens"""
+    sumup_service = SumUpIntegrationService(db)
+    return sumup_service.exchange_authorization_code(oauth_request)
+
+@app.post("/api/integrations/sumup/{business_id}/sync", response_model=SumUpSyncResponse)
+async def sync_sumup_sales_data(
+    business_id: int,
+    sync_request: SumUpSyncRequest,
+    db: Session = Depends(get_db)
+):
+    """Sync sales data from SumUp POS"""
+    sync_request.business_id = business_id
+    sumup_service = SumUpIntegrationService(db)
+    return sumup_service.sync_sales_data(sync_request)
+
+@app.post("/api/integrations/sumup/{business_id}/disconnect", response_model=SumUpDisconnectResponse)
+async def disconnect_sumup_integration(
+    business_id: int,
+    disconnect_request: SumUpDisconnectRequest,
+    db: Session = Depends(get_db)
+):
+    """Disconnect SumUp integration and optionally revoke tokens"""
+    disconnect_request.business_id = business_id
+    sumup_service = SumUpIntegrationService(db)
+    return sumup_service.disconnect_integration(disconnect_request)
+
+@app.get("/api/integrations/sumup/{business_id}/locations")
+async def get_sumup_locations(
+    business_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get SumUp locations mapped to LocalOps stores"""
+    locations = db.query(SumUpLocation).filter(
+        SumUpLocation.business_id == business_id,
+        SumUpLocation.is_active == True
+    ).all()
+    
+    return [
+        {
+            "id": loc.id,
+            "sumup_location_id": loc.sumup_location_id,
+            "sumup_location_name": loc.sumup_location_name,
+            "localops_location_id": loc.localops_location_id,
+            "created_at": loc.created_at
+        }
+        for loc in locations
+    ]
+
+@app.get("/api/integrations/sumup/{business_id}/sales")
+async def get_sumup_sales_data(
+    business_id: int,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    location_id: Optional[str] = None,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    """Get sales data from SumUp integration"""
+    query = db.query(SalesData).filter(SalesData.business_id == business_id)
+    
+    if start_date:
+        query = query.filter(SalesData.sale_time >= datetime.fromisoformat(start_date))
+    if end_date:
+        query = query.filter(SalesData.sale_time <= datetime.fromisoformat(end_date))
+    if location_id:
+        query = query.filter(SalesData.sumup_location_id == location_id)
+    
+    sales_data = query.order_by(SalesData.sale_time.desc()).limit(limit).all()
+    
+    return [
+        {
+            "id": sale.id,
+            "sumup_transaction_id": sale.sumup_transaction_id,
+            "sumup_location_id": sale.sumup_location_id,
+            "sale_time": sale.sale_time,
+            "sale_value": sale.sale_value,
+            "payment_type": sale.payment_type,
+            "customer_count": sale.customer_count,
+            "tip_amount": sale.tip_amount,
+            "discount_amount": sale.discount_amount,
+            "tax_amount": sale.tax_amount,
+            "staff_id": sale.staff_id,
+            "shift_id": sale.shift_id,
+            "created_at": sale.created_at
+        }
+        for sale in sales_data
+    ]
+
+@app.get("/api/integrations/sumup/{business_id}/analytics")
+async def get_sumup_sales_analytics(
+    business_id: int,
+    days: int = 7,
+    db: Session = Depends(get_db)
+):
+    """Get sales analytics from SumUp integration"""
+    from datetime import date
+    
+    end_date = date.today()
+    start_date = end_date - timedelta(days=days)
+    
+    # Get daily sales totals
+    daily_sales = db.query(
+        func.date(SalesData.sale_time).label('date'),
+        func.sum(SalesData.sale_value).label('total_sales'),
+        func.count(SalesData.id).label('transaction_count'),
+        func.avg(SalesData.sale_value).label('average_transaction')
+    ).filter(
+        SalesData.business_id == business_id,
+        func.date(SalesData.sale_time) >= start_date,
+        func.date(SalesData.sale_time) <= end_date
+    ).group_by(func.date(SalesData.sale_time)).all()
+    
+    # Get hourly sales patterns
+    hourly_sales = db.query(
+        func.extract('hour', SalesData.sale_time).label('hour'),
+        func.sum(SalesData.sale_value).label('total_sales'),
+        func.count(SalesData.id).label('transaction_count')
+    ).filter(
+        SalesData.business_id == business_id,
+        func.date(SalesData.sale_time) >= start_date,
+        func.date(SalesData.sale_time) <= end_date
+    ).group_by(func.extract('hour', SalesData.sale_time)).all()
+    
+    # Get top selling items
+    top_items = db.query(
+        SalesItem.item_name,
+        func.sum(SalesItem.quantity).label('total_quantity'),
+        func.sum(SalesItem.total_price).label('total_revenue')
+    ).join(SalesData).filter(
+        SalesData.business_id == business_id,
+        func.date(SalesData.sale_time) >= start_date,
+        func.date(SalesData.sale_time) <= end_date
+    ).group_by(SalesItem.item_name).order_by(
+        func.sum(SalesItem.total_price).desc()
+    ).limit(10).all()
+    
+    return {
+        "period": {
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "days": days
+        },
+        "daily_sales": [
+            {
+                "date": str(day.date),
+                "total_sales": float(day.total_sales),
+                "transaction_count": int(day.transaction_count),
+                "average_transaction": float(day.average_transaction)
+            }
+            for day in daily_sales
+        ],
+        "hourly_patterns": [
+            {
+                "hour": int(hour.hour),
+                "total_sales": float(hour.total_sales),
+                "transaction_count": int(hour.transaction_count)
+            }
+            for hour in hourly_sales
+        ],
+        "top_items": [
+            {
+                "item_name": item.item_name,
+                "total_quantity": float(item.total_quantity),
+                "total_revenue": float(item.total_revenue)
+            }
+            for item in top_items
+        ]
+    }
+
+@app.get("/api/integrations/sumup/{business_id}/logs")
+async def get_sumup_integration_logs(
+    business_id: int,
+    limit: int = 50,
+    operation: Optional[str] = None,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Get integration operation logs for audit trail"""
+    query = db.query(IntegrationLog).filter(
+        IntegrationLog.business_id == business_id,
+        IntegrationLog.integration_type == "sumup"
+    )
+    
+    if operation:
+        query = query.filter(IntegrationLog.operation == operation)
+    if status:
+        query = query.filter(IntegrationLog.status == status)
+    
+    logs = query.order_by(IntegrationLog.created_at.desc()).limit(limit).all()
+    
+    return [
+        {
+            "id": log.id,
+            "operation": log.operation,
+            "status": log.status,
+            "message": log.message,
+            "details": log.details,
+            "error_code": log.error_code,
+            "error_message": log.error_message,
+            "created_at": log.created_at
+        }
+        for log in logs
+    ]
+
+# Bolt-On Management API Endpoints (Platform Owner)
+@app.get("/api/admin/bolt-ons/{bolt_on_type}/dashboard", response_model=BoltOnAdminDashboard)
+async def get_bolt_on_admin_dashboard(
+    bolt_on_type: str,
+    current_user: Staff = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get admin dashboard for bolt-on management"""
+    from services.bolt_on_management import BoltOnManagementService
+    
+    # Check if user has admin permissions
+    if current_user.user_role not in ['admin', 'superadmin']:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    bolt_on_service = BoltOnManagementService(db)
+    return bolt_on_service.get_admin_dashboard(bolt_on_type)
+
+@app.post("/api/admin/bolt-ons/{bolt_on_type}/toggle", response_model=BoltOnToggleResponse)
+async def toggle_business_bolt_on(
+    bolt_on_type: str,
+    toggle_request: BoltOnToggleRequest,
+    current_user: Staff = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Enable or disable bolt-on for a specific business"""
+    from services.bolt_on_management import BoltOnManagementService
+    
+    # Check if user has admin permissions
+    if current_user.user_role not in ['admin', 'superadmin']:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    bolt_on_service = BoltOnManagementService(db)
+    return bolt_on_service.toggle_business_bolt_on(toggle_request, current_user.id)
+
+@app.post("/api/admin/bolt-ons/{bolt_on_type}/bulk-action", response_model=BoltOnBulkActionResponse)
+async def bulk_bolt_on_action(
+    bolt_on_type: str,
+    bulk_request: BoltOnBulkActionRequest,
+    current_user: Staff = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Perform bulk actions on bolt-ons"""
+    from services.bolt_on_management import BoltOnManagementService
+    
+    # Check if user has admin permissions
+    if current_user.user_role not in ['admin', 'superadmin']:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    bolt_on_service = BoltOnManagementService(db)
+    return bolt_on_service.perform_bulk_action(bulk_request, current_user.id)
+
+@app.get("/api/admin/bolt-ons/{bolt_on_type}/business/{business_id}/analytics")
+async def get_business_bolt_on_analytics(
+    bolt_on_type: str,
+    business_id: int,
+    period: str = "30d",
+    current_user: Staff = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get usage analytics for a specific business"""
+    from services.bolt_on_management import BoltOnManagementService
+    
+    # Check if user has admin permissions
+    if current_user.user_role not in ['admin', 'superadmin']:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    bolt_on_service = BoltOnManagementService(db)
+    analytics = bolt_on_service.get_business_analytics(bolt_on_type, business_id, period)
+    
+    if not analytics:
+        raise HTTPException(status_code=404, detail="Analytics not available")
+    
+    return analytics
+
+@app.get("/api/admin/bolt-ons/audit-logs")
+async def get_bolt_on_audit_logs(
+    business_id: Optional[int] = None,
+    bolt_on_type: Optional[str] = None,
+    limit: int = 100,
+    current_user: Staff = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get audit logs for bolt-on management actions"""
+    from services.bolt_on_management import BoltOnManagementService
+    
+    # Check if user has admin permissions
+    if current_user.user_role not in ['admin', 'superadmin']:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    bolt_on_service = BoltOnManagementService(db)
+    logs = bolt_on_service.get_audit_logs(business_id, bolt_on_type, limit)
+    
+    return [
+        {
+            "id": log.id,
+            "business_id": log.business_id,
+            "bolt_on_type": log.bolt_on_type,
+            "action": log.action,
+            "performed_by": log.performed_by,
+            "old_value": log.old_value,
+            "new_value": log.new_value,
+            "reason": log.reason,
+            "created_at": log.created_at,
+            "performer_name": log.performer.name if log.performer else None,
+            "business_name": log.business.name if log.business else None
+        }
+        for log in logs
+    ]
+
+@app.put("/api/admin/bolt-ons/{bolt_on_type}/config")
+async def update_bolt_on_config(
+    bolt_on_type: str,
+    config_update: BoltOnManagementUpdate,
+    current_user: Staff = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update bolt-on platform configuration"""
+    from services.bolt_on_management import BoltOnManagementService
+    
+    # Check if user has admin permissions
+    if current_user.user_role not in ['admin', 'superadmin']:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    bolt_on_service = BoltOnManagementService(db)
+    updated_config = bolt_on_service.update_bolt_on_management(bolt_on_type, config_update)
+    
+    if not updated_config:
+        raise HTTPException(status_code=404, detail="Bolt-on configuration not found")
+    
+    return {
+        "success": True,
+        "message": "Bolt-on configuration updated successfully",
+        "config": {
+            "bolt_on_type": updated_config.bolt_on_type,
+            "is_platform_enabled": updated_config.is_platform_enabled,
+            "monthly_price": updated_config.monthly_price,
+            "required_plan": updated_config.required_plan,
+            "description": updated_config.description,
+            "features": updated_config.features,
+            "updated_at": updated_config.updated_at
+        }
+    }
+
+# Customer Bolt-On Management API Endpoints
+@app.get("/api/business/{business_id}/integrations")
+async def get_business_integrations(
+    business_id: int,
+    current_user: Staff = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all integrations available to a business"""
+    # Check if user belongs to the business
+    if current_user.business_id != business_id and current_user.user_role not in ['admin', 'superadmin']:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Get SumUp integration status
+    sumup_integration = db.query(SumUpIntegration).filter(
+        SumUpIntegration.business_id == business_id
+    ).first()
+    
+    # Get bolt-on subscriptions
+    subscriptions = db.query(BoltOnSubscription).filter(
+        BoltOnSubscription.business_id == business_id
+    ).all()
+    
+    # Get platform bolt-on configurations
+    bolt_on_configs = db.query(BoltOnManagement).all()
+    
+    integrations = []
+    
+    for config in bolt_on_configs:
+        subscription = next((s for s in subscriptions if s.bolt_on_type == config.bolt_on_type), None)
+        
+        integration_data = {
+            "bolt_on_type": config.bolt_on_type,
+            "name": config.description or config.bolt_on_type.replace('_', ' ').title(),
+            "is_platform_enabled": config.is_platform_enabled,
+            "monthly_price": config.monthly_price,
+            "required_plan": config.required_plan,
+            "features": config.features or [],
+            "is_subscribed": bool(subscription and subscription.subscription_status == 'active'),
+            "subscription_status": subscription.subscription_status if subscription else None
+        }
+        
+        # Add SumUp-specific data
+        if config.bolt_on_type == 'sumup_sync' and sumup_integration:
+            integration_data.update({
+                "is_connected": sumup_integration.is_enabled and sumup_integration.is_entitled,
+                "last_sync_at": sumup_integration.last_sync_at,
+                "connection_status": "connected" if sumup_integration.is_enabled and sumup_integration.is_entitled else "disconnected"
+            })
+        
+        integrations.append(integration_data)
+    
+    return {
+        "business_id": business_id,
+        "integrations": integrations
+    }
+
+@app.post("/api/business/{business_id}/integrations/{bolt_on_type}/toggle")
+async def toggle_business_integration(
+    business_id: int,
+    bolt_on_type: str,
+    enable: bool,
+    current_user: Staff = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Toggle integration for a business (customer admin)"""
+    # Check if user belongs to the business and has admin permissions
+    if current_user.business_id != business_id or current_user.user_role not in ['admin', 'manager']:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    from services.bolt_on_management import BoltOnManagementService
+    
+    toggle_request = BoltOnToggleRequest(
+        business_id=business_id,
+        bolt_on_type=bolt_on_type,
+        enable=enable,
+        reason=f"Toggled by business admin {current_user.name}"
+    )
+    
+    bolt_on_service = BoltOnManagementService(db)
+    return bolt_on_service.toggle_business_bolt_on(toggle_request, current_user.id)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8001)

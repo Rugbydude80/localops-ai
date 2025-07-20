@@ -30,9 +30,9 @@ export default function BusinessConstraintsModal({ businessId, onClose }: Busine
   const [error, setError] = useState<string | null>(null)
   const [showAddConstraint, setShowAddConstraint] = useState(false)
 
-  const [newConstraint, setNewConstraint] = useState({
+  const [newConstraint, setNewConstraint] = useState<any>({
     constraint_type: 'max_hours_per_week',
-    constraint_value: {},
+    constraint_value: { hours: 40 },
     priority: 'medium'
   })
 
@@ -43,7 +43,7 @@ export default function BusinessConstraintsModal({ businessId, onClose }: Busine
   const loadConstraints = async () => {
     try {
       setLoading(true)
-      const response = await fetch(`/api/business/${businessId}/constraints`)
+      const response = await fetch(`http://localhost:8001/api/business/${businessId}/constraints`)
       if (!response.ok) throw new Error('Failed to load constraints')
       
       const data = await response.json()
@@ -60,7 +60,7 @@ export default function BusinessConstraintsModal({ businessId, onClose }: Busine
     try {
       setSaving(true)
       
-      const response = await fetch(`/api/business/${businessId}/constraints`, {
+      const response = await fetch(`http://localhost:8001/api/business/${businessId}/constraints`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -90,7 +90,7 @@ export default function BusinessConstraintsModal({ businessId, onClose }: Busine
 
   const handleUpdateConstraint = async (constraintId: number, updates: any) => {
     try {
-      const response = await fetch(`/api/business/${businessId}/constraints/${constraintId}`, {
+      const response = await fetch(`http://localhost:8001/api/business/${businessId}/constraints/${constraintId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates)
@@ -106,7 +106,7 @@ export default function BusinessConstraintsModal({ businessId, onClose }: Busine
 
   const handleDeleteConstraint = async (constraintId: number) => {
     try {
-      const response = await fetch(`/api/business/${businessId}/constraints/${constraintId}`, {
+      const response = await fetch(`http://localhost:8001/api/business/${businessId}/constraints/${constraintId}`, {
         method: 'DELETE'
       })
       
