@@ -387,6 +387,10 @@ class SmartCommunicationHub:
         return recommendations
 
 
+class SmartCommunicationService(SmartCommunicationHub):
+    """Alias for SmartCommunicationHub to maintain compatibility with tests"""
+    pass
+
 class EmailService:
     """Email service for sending schedule notifications"""
     
